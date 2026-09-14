@@ -1,0 +1,348 @@
+import { useState, useEffect } from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
+import { ArrowRight, Minus, Plus, ShoppingBag, Tag, Trash2, X } from 'lucide-react'
+import { Link, useNavigate } from 'react-router-dom'
+import { useApp } from '../context/AppContext'
+import { CouponModal } from './CouponModal'
+
+
+//Ngăn kéo giỏ hàng trượt ra từ cạnh màn hình.
+export function CartDrawer() {
+  const {
+    cartDrawerOpen,
+    setCartDrawerOpen,
+    cart,
+    cartSubtotal,
+    cartTotal,
+    discountAmount,
+    shippingFee,
+    appliedCoupon,
+    removeCoupon,
+    updateCart,
+    removeFromCart,
+    toggleCartItem,
+    updateCartVariant,
+    user,
+    notify,
+  } = useApp()
+
+  const [couponModalOpen, setCouponModalOpen] = useState(false)
+  const navigate = useNavigate()
+
+  const handleCheckout = () => {
+    setCartDrawerOpen(false)
+    if (!user) {
+      notify('Vui lòng đăng nhập để tiến hành thanh toán!')
+      navigate('/login', { state: { from: '/checkout' } })
+    } else {
+      navigate('/checkout')
+    }
+  }
+
+  useEffect(() => {
+    if (cartDrawerOpen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+  }, [cartDrawerOpen]);
+  return (
+    <>
+      <AnimatePresence>
+        {cartDrawerOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setCartDrawerOpen(false)}
+              className="fixed inset-0 z-50 bg-[#0B0E17]/80 backdrop-blur-sm"
+            />
+
+            {/* Slide-out Drawer */}
+            <motion.aside
+              initial={{ x: '100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 260 }}
+              className="fixed right-0 top-0 z-50 flex h-full w-full max-w-md flex-col border-l border-white/10 bg-[#131823] p-6 text-white shadow-2xl"
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between border-b border-white/10 pb-5">
+                <div className="flex items-center gap-2.5">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-lime-400 text-slate-950">
+                    <ShoppingBag size={18} />
+                  </div>
+                  <h2 className="text-xl font-black">
+                    Giỏ hàng <span className="text-lime-400">({cart.length})</span>
+                  </h2>
+                </div>
+                <button
+                  onClick={() => setCartDrawerOpen(false)}
+                  className="rounded-xl p-2 text-slate-400 transition hover:bg-white/10 hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              {/* Cart Items List */}
+              <div className="flex-1 overflow-y-auto py-5">
+                {cart.length === 0 ? (
+                  <div className="grid h-full place-items-center text-center">
+                    <div className="space-y-4">
+                      <div className="mx-auto grid h-20 w-20 place-items-center rounded-3xl border border-white/10 bg-white/5 text-4xl">
+                        ⚽
+                      </div>
+                      <h3 className="text-lg font-black text-white">
+                        Giỏ hàng của bạn đang trống
+                      </h3>
+                      <p className="text-xs text-slate-400 max-w-[220px] mx-auto">
+                        Hãy chọn cho mình đôi giày hoặc áo đấu yêu thích ngay nhé!
+                      </p>
+                      <Link
+                        onClick={() => setCartDrawerOpen(false)}
+                        to="/shop"
+                        className="inline-flex rounded-xl bg-lime-400 px-6 py-3 text-xs font-black text-slate-950 shadow-lg shadow-lime-400/20 hover:bg-lime-300"
+                      >
+                        Khám phá cửa hàng
+                      </Link>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-3.5">
+                    {cart.map((item) => (
+                      <motion.div
+                        layout
+                        key={item.cartItemId}
+                        className={`flex gap-3 rounded-2xl border p-3 transition ${
+                          item.selected === false
+                            ? 'border-white/5 bg-[#0B0E17]/40 opacity-60'
+                            : 'border-white/10 bg-[#0B0E17]/60'
+                        }`}
+                      >
+                        {/* Checkbox */}
+                        <input
+                          type="checkbox"
+                          aria-label={`Chọn ${item.name}`}
+                          checked={item.selected !== false}
+                          onChange={() => toggleCartItem(item.cartItemId)}
+                          className="mt-2 h-4 w-4 rounded accent-lime-400 cursor-pointer"
+                        />
+
+                        {/* Image */}
+                        <img
+                          src={
+                            item.image?.startsWith('http') || item.image?.startsWith('data:')
+                              ? item.image
+                              : item.image?.startsWith('/storage/')
+                              ? `http://localhost:8000${item.image}`
+                              : `http://localhost:8000/storage/${item.image || ''}`
+                          }
+                          alt={item.name}
+                          className="h-20 w-20 rounded-xl object-cover border border-white/10 bg-[#0B0E17]"
+                          onError={(e) => {
+                            (e.currentTarget as HTMLImageElement).src =
+                              'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=300&q=80'
+                          }}
+                        />
+
+                        {/* Info */}
+                        <div className="min-w-0 flex-1 space-y-1.5">
+                          <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                            {item.brand}
+                          </p>
+                          <h3 className="truncate text-xs font-bold text-white">
+                            {item.name}
+                          </h3>
+
+                          {/* Variants */}
+                          <div className="flex gap-2">
+                            <select
+                              value={item.selectedSize ?? item.sizes?.[0]}
+                              onChange={(e) =>
+                                updateCartVariant(
+                                  item.cartItemId,
+                                  e.target.value,
+                                  item.selectedColor ?? item.colors?.[0]
+                                )
+                              }
+                              className="rounded-lg border border-white/10 bg-[#0B0E17] px-2 py-0.5 text-[11px] text-slate-300 outline-none"
+                            >
+                              {item.sizes?.map((size) => (
+                                <option key={size} value={size}>
+                                  Size {size}
+                                </option>
+                              ))}
+                            </select>
+
+                            <select
+                              value={item.selectedColor ?? item.colors?.[0]}
+                              onChange={(e) =>
+                                updateCartVariant(
+                                  item.cartItemId,
+                                  item.selectedSize ?? item.sizes?.[0],
+                                  e.target.value
+                                )
+                              }
+                              className="rounded-lg border border-white/10 bg-[#0B0E17] px-2 py-0.5 text-[11px] text-slate-300 outline-none"
+                            >
+                              {item.colors?.map((color) => (
+                                <option key={color} value={color}>
+                                  {color}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="font-mono text-xs font-black text-lime-300">
+                              {(item.price * item.quantity).toLocaleString('vi-VN')}đ
+                            </span>
+
+                            {/* Quantity Control */}
+                            <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-[#0B0E17] px-2 py-1">
+                              <button
+                                onClick={() =>
+                                  updateCart(item.cartItemId, item.quantity - 1)
+                                }
+                                className="text-slate-400 hover:text-white"
+                              >
+                                <Minus size={12} />
+                              </button>
+                              <span className="w-6 text-center text-xs font-bold">
+                                {item.quantity}
+                              </span>
+                              <button
+                                onClick={() =>
+                                  updateCart(item.cartItemId, item.quantity + 1)
+                                }
+                                className="text-slate-400 hover:text-white"
+                              >
+                                <Plus size={12} />
+                              </button>
+                            </div>
+
+                            <button
+                              onClick={() => removeFromCart(item.cartItemId)}
+                              className="text-slate-500 transition hover:text-rose-400 p-1"
+                              title="Xóa"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Footer / Summary */}
+              {cart.length > 0 && (
+                <div className="space-y-4 border-t border-white/10 pt-4">
+                  {/* Voucher Pill */}
+                  <div className="flex items-center justify-between rounded-xl border border-white/10 bg-white/5 p-2.5 text-xs">
+                    <div className="flex items-center gap-2">
+                      <Tag size={15} className="text-lime-300" />
+                      {appliedCoupon ? (
+                        <div>
+                          <span className="font-mono font-bold text-lime-300">
+                            {appliedCoupon.code}
+                          </span>
+                          <span className="ml-1 text-slate-400">
+                            ({appliedCoupon.title})
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-slate-400">Chưa áp dụng voucher</span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      {appliedCoupon && (
+                        <button
+                          onClick={removeCoupon}
+                          className="text-[11px] text-rose-400 hover:underline"
+                        >
+                          Gỡ
+                        </button>
+                      )}
+                      <button
+                        onClick={() => setCouponModalOpen(true)}
+                        className="rounded-lg bg-lime-400/20 px-2.5 py-1 font-bold text-lime-300 hover:bg-lime-400/30 text-[11px]"
+                      >
+                        {appliedCoupon ? 'Đổi mã' : 'Chọn Voucher'}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Lines Breakdown */}
+                  <div className="space-y-1.5 text-xs">
+                    <div className="flex justify-between text-slate-400">
+                      <span>Tạm tính</span>
+                      <span className="font-mono text-white">
+                        {cartSubtotal.toLocaleString('vi-VN')}đ
+                      </span>
+                    </div>
+
+                    {discountAmount > 0 && (
+                      <div className="flex justify-between text-emerald-400 font-semibold">
+                        <span>Giảm giá Voucher</span>
+                        <span className="font-mono">
+                          -{discountAmount.toLocaleString('vi-VN')}đ
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="flex justify-between text-slate-400">
+                      <span>Phí giao hàng</span>
+                      <span className="font-mono">
+                        {shippingFee === 0 ? (
+                          <b className="text-lime-300">Miễn phí</b>
+                        ) : (
+                          `${shippingFee.toLocaleString('vi-VN')}đ`
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex justify-between border-t border-white/10 pt-2 text-sm">
+                      <span className="font-bold text-white">Tổng thanh toán</span>
+                      <b className="font-mono text-base font-black text-lime-300">
+                        {cartTotal.toLocaleString('vi-VN')}đ
+                      </b>
+                    </div>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <Link
+                      onClick={() => setCartDrawerOpen(false)}
+                      to="/cart"
+                      className="flex items-center justify-center rounded-xl border border-white/15 py-3 text-xs font-bold text-white transition hover:bg-white/10"
+                    >
+                      Xem chi tiết giỏ
+                    </Link>
+
+                    <button
+                      onClick={handleCheckout}
+                      className="flex items-center justify-center gap-2 rounded-xl bg-lime-400 py-3 text-xs font-black text-slate-950 transition hover:bg-lime-300 shadow-lg shadow-lime-400/20"
+                    >
+                      Thanh toán <ArrowRight size={15} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* Coupon Modal */}
+      <CouponModal
+        isOpen={couponModalOpen}
+        onClose={() => setCouponModalOpen(false)}
+      />
+    </>
+  )
+}
