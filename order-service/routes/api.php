@@ -19,7 +19,8 @@ Route::get('/orders/stats', [OrderController::class, 'stats']);
 Route::post('/orders', [OrderController::class, 'store']);
 Route::get('/orders/{order}', [OrderController::class, 'show']);
 Route::patch('/orders/{order}/status', [OrderController::class, 'updateStatus']);
-Route::post('/orders/{order}/ship-ghn', [OrderController::class, 'createGhnShipping']);
+Route::post('/orders/{order_code}/ship-ghn', [OrderController::class, 'shipWithGHN']);
+Route::post('/orders/{order}/ship-ghn', [OrderController::class, 'shipWithGHN']);
 
 // Coupon / Voucher Routes
 Route::get('/coupons', [CouponController::class, 'index']);

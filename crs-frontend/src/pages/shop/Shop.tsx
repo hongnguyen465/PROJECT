@@ -12,8 +12,7 @@ import {
 import { useSearchParams } from 'react-router-dom'
 import { ProductCard } from '../../components/ProductCard'
 import { ProductSkeleton } from '../../components/Skeleton'
-import { products, categories, brands } from '../../data'
-import { fetchProducts } from '../../services/catalog'
+import { fetchProducts, fetchCategories, fetchBrands } from '../../services/catalog'
 import type { Product } from '../../types'
 
 function matchCategoryFromQuery(value: string | null, dynamicCats: string[]): string {
@@ -59,47 +58,23 @@ function matchCategoryFromQuery(value: string | null, dynamicCats: string[]): st
 export function Shop() {
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // Load categories and brands dynamically from localStorage
-  const [shopCategories, setShopCategories] = useState<string[]>(() => {
-    const stored = localStorage.getItem('crs_categories')
-    if (!stored) return categories
-    try {
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return ['Tất cả', ...parsed.map((c: any) => (typeof c === 'string' ? c : c.name))]
-      }
-      return categories
-    } catch {
-      return categories
-    }
-  })
+  const [shopCategories, setShopCategories] = useState<string[]>([
+    'Tất cả',
+    'Giày bóng đá',
+    'Áo đấu',
+    'Bóng thi đấu',
+    'Phụ kiện'
+  ])
 
-  const [shopBrands, setShopBrands] = useState<string[]>(() => {
-    const stored = localStorage.getItem('crs_brands')
-    if (!stored) return brands
-    try {
-      const parsed = JSON.parse(stored)
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return ['Tất cả thương hiệu', ...parsed.map((b: any) => (typeof b === 'string' ? b : b.name))]
-      }
-      return brands
-    } catch {
-      return brands
-    }
-  })
+  const [shopBrands, setShopBrands] = useState<string[]>([
+    'Tất cả thương hiệu',
+    'Nike',
+    'Adidas',
+    'Puma',
+    'Mizuno'
+  ])
 
-  // Initial products from localStorage or fallback
-  const [catalog, setCatalog] = useState<Product[]>(() => {
-    const stored = localStorage.getItem('crs_admin_products');
-    if (!stored) return products;
-    try {
-      const parsed = JSON.parse(stored);
-      return Array.isArray(parsed) && parsed.length > 0 ? parsed : products;
-    } catch {
-      return products;
-    }
-  });
-
+  const [catalog, setCatalog] = useState<Product[]>([])
   const [loading, setLoading] = useState(true)
   const [offline, setOffline] = useState(false)
   const [category, setCategory] = useState(() => matchCategoryFromQuery(searchParams.get('category'), shopCategories))
@@ -108,41 +83,6 @@ export function Shop() {
   const [sort, setSort] = useState('featured')
   const [priceRange, setPriceRange] = useState<'all' | 'under1m' | '1m-3m' | 'above3m'>('all')
   const [filterOpen, setFilterOpen] = useState(false)
-
-  // Listen to storage events from Admin (categories, brands, products)
-  useEffect(() => {
-    const handleStorage = () => {
-      const storedCats = localStorage.getItem('crs_categories')
-      if (storedCats) {
-        try {
-          const parsed = JSON.parse(storedCats)
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setShopCategories(['Tất cả', ...parsed.map((c: any) => (typeof c === 'string' ? c : c.name))])
-          }
-        } catch {}
-      }
-      const storedBrands = localStorage.getItem('crs_brands')
-      if (storedBrands) {
-        try {
-          const parsed = JSON.parse(storedBrands)
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setShopBrands(['Tất cả thương hiệu', ...parsed.map((b: any) => (typeof b === 'string' ? b : b.name))])
-          }
-        } catch {}
-      }
-      const storedProducts = localStorage.getItem('crs_admin_products')
-      if (storedProducts) {
-        try {
-          const parsed = JSON.parse(storedProducts)
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setCatalog(parsed)
-          }
-        } catch {}
-      }
-    }
-    window.addEventListener('storage', handleStorage)
-    return () => window.removeEventListener('storage', handleStorage)
-  }, [])
 
   // Listen to searchParams changes (e.g. from Header links or browser back/forward)
   useEffect(() => {
@@ -162,26 +102,31 @@ export function Shop() {
 
   useEffect(() => {
     let active = true
-    fetchProducts()
-      .then((data) => {
-        if (!active || !Array.isArray(data) || data.length === 0) return
-        setCatalog(
-          data.map((item) => ({
-            ...item,
-            category: item.category?.name ?? item.category ?? 'Dụng cụ bóng đá',
-            image: item.image_url ?? item.image ?? products[0].image,
-            colors: item.colors ?? ['Green'],
-            sizes: item.sizes ?? ['M'],
-            description: item.description ?? 'Thiết bị bóng đá hiệu suất cao.',
-          }))
-        )
-      })
-      .catch(() => {
-        if (active) setOffline(true)
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
+    setLoading(true)
+
+    Promise.allSettled([
+      fetchProducts({ per_page: 100 }),
+      fetchCategories(),
+      fetchBrands(),
+    ]).then(([prodsRes, catsRes, brandsRes]) => {
+      if (!active) return
+
+      if (prodsRes.status === 'fulfilled' && Array.isArray(prodsRes.value)) {
+        setCatalog(prodsRes.value)
+      }
+
+      if (catsRes.status === 'fulfilled' && Array.isArray(catsRes.value) && catsRes.value.length > 0) {
+        setShopCategories(['Tất cả', ...catsRes.value.map((c: any) => c.name)])
+      }
+
+      if (brandsRes.status === 'fulfilled' && Array.isArray(brandsRes.value) && brandsRes.value.length > 0) {
+        setShopBrands(['Tất cả thương hiệu', ...brandsRes.value.map((b: any) => b.name)])
+      }
+    }).catch(() => {
+      if (active) setOffline(true)
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
 
     return () => {
       active = false

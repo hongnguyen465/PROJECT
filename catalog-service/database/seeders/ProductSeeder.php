@@ -141,7 +141,6 @@ class ProductSeeder extends Seeder
                     'sizes' => $data['sizes'],
                     'description' => $data['description'],
                     'is_active' => true,
-                    'is_deleted' => false,
                 ]
             );
 

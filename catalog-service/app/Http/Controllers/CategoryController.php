@@ -16,9 +16,7 @@ class CategoryController extends Controller
      */
     public function index(): JsonResponse
     {
-        $categories = Category::withCount(['products' => function ($q) {
-            $q->where('is_deleted', false);
-        }])->latest()->get();
+        $categories = Category::withCount('products')->latest()->get();
 
         return response()->json([
             'success' => true,
@@ -64,7 +62,7 @@ class CategoryController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Lấy thông tin danh mục thành công.',
-            'data' => $category->load(['products' => fn ($q) => $q->where('is_deleted', false)]),
+            'data' => $category->load('products'),
             'errors' => null,
         ]);
     }

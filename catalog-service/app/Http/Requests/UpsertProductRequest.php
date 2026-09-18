@@ -34,6 +34,13 @@ class UpsertProductRequest extends FormRequest
             'images.*' => ['string', 'max:2048'],
             'colors' => ['nullable', 'array'],
             'sizes' => ['nullable', 'array'],
+            'variants' => ['nullable', 'array'],
+            'variants.*.sku' => ['nullable', 'string', 'max:100'],
+            'variants.*.price' => ['nullable', 'numeric'],
+            'variants.*.sale_price' => ['nullable', 'numeric'],
+            'variants.*.stock' => ['nullable', 'integer', 'min:0'],
+            'variants.*.attributes' => ['nullable', 'array'],
+            'variants.*.is_active' => ['nullable', 'boolean'],
             'is_active' => ['sometimes', 'boolean'],
         ];
     }

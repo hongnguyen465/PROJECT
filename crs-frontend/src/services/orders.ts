@@ -59,7 +59,7 @@ export async function getMomoPayUrl(orderId: number | string): Promise<string | 
 }
 
 export async function fetchOrders(userId?: number) {
-  const params: Record<string, any> = {}
+  const params: Record<string, any> = { per_page: 100 }
   if (userId) params.user_id = userId
   const response = await api.get('/orders', { params })
   return response.data?.data ?? response.data

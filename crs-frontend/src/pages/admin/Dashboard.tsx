@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   TrendingUp, 
@@ -15,9 +15,10 @@ import {
   ArrowRight
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { products as seedProducts } from '../../data';
-import { INITIAL_ADMIN_ORDERS, INITIAL_ADMIN_CUSTOMERS, SAMPLE_PRODUCT_IMAGES } from '../../data/adminMockData';
-import type { Order, Product, Customer } from '../../types';
+import { fetchAdminOrders, fetchOrderStats, mapBackendOrder } from '../../services/orders';
+import { fetchProducts } from '../../services/catalog';
+import { fetchAdminUsers } from '../../services/auth';
+import type { Order, Product } from '../../types';
 
 // Helper to safely parse order date strings
 const parseOrderDate = (dateStr: string): Date => {
@@ -43,38 +44,66 @@ export const Dashboard: React.FC = () => {
   const [timeRange, setTimeRange] = useState<'7days' | '30days' | '12months'>('7days');
   const [hoveredPoint, setHoveredPoint] = useState<number | null>(null);
 
-  // 1. Combine context orders with mock admin orders
+  // Real data states from APIs
+  const [backendOrders, setBackendOrders] = useState<Order[]>([]);
+  const [productsList, setProductsList] = useState<Product[]>([]);
+  const [customersList, setCustomersList] = useState<any[]>([]);
+  const [statsKpi, setStatsKpi] = useState<{ total: number; pending: number; shipping: number; delivered: number; cancelled: number } | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    async function loadDashboardData() {
+      try {
+        const [ordersRes, statsRes, prodsRes, usersRes] = await Promise.allSettled([
+          fetchAdminOrders({ per_page: 50 }),
+          fetchOrderStats(),
+          fetchProducts(),
+          fetchAdminUsers(),
+        ]);
+
+        if (!isMounted) return;
+
+        if (ordersRes.status === 'fulfilled') {
+          const rawList = ordersRes.value?.data ?? ordersRes.value ?? [];
+          if (Array.isArray(rawList)) {
+            setBackendOrders(rawList.map(mapBackendOrder));
+          }
+        }
+
+        if (statsRes.status === 'fulfilled' && statsRes.value) {
+          setStatsKpi(statsRes.value);
+        }
+
+        if (prodsRes.status === 'fulfilled' && Array.isArray(prodsRes.value)) {
+          setProductsList(prodsRes.value);
+        }
+
+        if (usersRes.status === 'fulfilled' && Array.isArray(usersRes.value)) {
+          setCustomersList(usersRes.value);
+        }
+      } catch (err) {
+        console.error('Error loading dashboard data:', err);
+      }
+    }
+
+    loadDashboardData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // 1. Combine context orders with real backend orders
   const orders: Order[] = useMemo(() => {
     const combined = [...(contextOrders || [])];
-    INITIAL_ADMIN_ORDERS.forEach((initialOrder) => {
-      if (!combined.some((o) => o.id === initialOrder.id)) {
-        combined.push(initialOrder);
+    backendOrders.forEach((bo) => {
+      if (!combined.some((o) => String(o.id) === String(bo.id))) {
+        combined.push(bo);
       }
     });
     return combined;
-  }, [contextOrders]);
-
-  // 2. Load products from localStorage or fallback
-  const productsList: Product[] = useMemo(() => {
-    const stored = localStorage.getItem('crs_admin_products');
-    if (!stored) return seedProducts;
-    try {
-      return JSON.parse(stored) as Product[];
-    } catch {
-      return seedProducts;
-    }
-  }, []);
-
-  // 3. Load customers from localStorage or fallback
-  const customersList: Customer[] = useMemo(() => {
-    const stored = localStorage.getItem('crs_admin_customers');
-    if (!stored) return INITIAL_ADMIN_CUSTOMERS;
-    try {
-      return JSON.parse(stored) as Customer[];
-    } catch {
-      return INITIAL_ADMIN_CUSTOMERS;
-    }
-  }, []);
+  }, [contextOrders, backendOrders]);
 
   // 4. Dynamic KPI Calculations
   // Total Revenue: Sum of total for orders with status !== 'cancelled'
@@ -85,23 +114,11 @@ export const Dashboard: React.FC = () => {
   );
 
   // Total Orders & Status Breakdowns
-  const totalOrdersCount = orders.length;
-  const pendingOrdersCount = useMemo(
-    () => orders.filter((o) => o.status === 'pending').length,
-    [orders]
-  );
-  const shippingOrdersCount = useMemo(
-    () => orders.filter((o) => o.status === 'shipping').length,
-    [orders]
-  );
-  const deliveredOrdersCount = useMemo(
-    () => orders.filter((o) => o.status === 'delivered' || (o as any).status === 'paid').length,
-    [orders]
-  );
-  const cancelledOrdersCount = useMemo(
-    () => orders.filter((o) => o.status === 'cancelled').length,
-    [orders]
-  );
+  const totalOrdersCount = statsKpi ? statsKpi.total : orders.length;
+  const pendingOrdersCount = statsKpi ? statsKpi.pending : orders.filter((o) => o.status === 'pending').length;
+  const shippingOrdersCount = statsKpi ? statsKpi.shipping : orders.filter((o) => o.status === 'shipping').length;
+  const deliveredOrdersCount = statsKpi ? statsKpi.delivered : orders.filter((o) => o.status === 'delivered' || (o as any).status === 'paid').length;
+  const cancelledOrdersCount = statsKpi ? statsKpi.cancelled : orders.filter((o) => o.status === 'cancelled').length;
 
   // Total Customers: Accounts with role === 'user' (or active customer profiles)
   const totalCustomersCount = useMemo(() => {
@@ -238,7 +255,7 @@ export const Dashboard: React.FC = () => {
         return {
           id: item.id || idx,
           name: catalogProd.name || item.name,
-          image: catalogProd.image || item.image || SAMPLE_PRODUCT_IMAGES[0],
+          image: catalogProd.image || item.image || 'https://images.unsplash.com/photo-1542291026-7eec264c27ff?w=600&q=80',
           price: catalogProd.price || item.price || 0,
           unitsSold,
           revenueTotal: revenue,

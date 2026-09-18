@@ -30,9 +30,9 @@ return [
 
     'ghn' => [
         'token' => env('GHN_TOKEN', '84d13de2-aa85-11f1-a973-aee5264794df'),
-        'shop_id' => (int) env('GHN_SHOP_ID', 216452),
+        'shop_id' => (int) env('GHN_SHOP_ID', 217482),
         'base_url' => env('GHN_BASE_URL', 'https://dev-online-gateway.ghn.vn/shiip/public-api'),
-        'from_district_id' => (int) env('GHN_FROM_DISTRICT_ID', 1450),
+        'from_district_id' => (int) env('GHN_FROM_DISTRICT_ID', 1482),
     ],
 
     'catalog' => [
@@ -40,13 +40,15 @@ return [
     ],
 
     'momo' => [
-        'endpoint' => env('MOMO_ENDPOINT', 'https://test-payment.momo.vn/v2/gateway/api/create'),
+        'endpoint'     => env('MOMO_ENDPOINT', 'https://test-payment.momo.vn/v2/gateway/api/create'),
         'partner_code' => env('MOMO_PARTNER_CODE', 'MOMOBKUN20180529'),
-        'access_key' => env('MOMO_ACCESS_KEY', 'klm05TvNBzhg7h7j'),
-        'secret_key' => env('MOMO_SECRET_KEY', 'at67qH6mk8w5Y1nAyMoYKMWACiEi2bsa'),
-        'verify_ssl' => env('MOMO_VERIFY_SSL', false),
+        'partner_name' => env('MOMO_PARTNER_NAME', 'Striker Sport'),
+        'store_id'     => env('MOMO_STORE_ID', 'StrikerStore'),
+        'access_key'   => env('MOMO_ACCESS_KEY', 'klm05TvNBzhg7h7j'),
+        'secret_key'   => env('MOMO_SECRET_KEY', 'at67qH6mk8w5Y1nAyMoYKMWACiEi2bsa'),
+        'verify_ssl'   => env('MOMO_VERIFY_SSL', false),
         'redirect_url' => env('MOMO_REDIRECT_URL'),
-        'ipn_url' => env('MOMO_IPN_URL'),
+        'ipn_url'      => env('MOMO_IPN_URL'),
         'request_type' => env('MOMO_REQUEST_TYPE', 'payWithATM'),
     ],
 

@@ -37,6 +37,9 @@ export const Orders: React.FC = () => {
       const list: any[] = Array.isArray(raw) ? raw : (raw?.data ?? []);
       const mapped = list.map(mapBackendOrder);
       setLocalOrders(mapped);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new Event('order-status-changed'));
+      }
       if (showToast) {
         toast.success('Đã làm mới danh sách đơn hàng!');
       }
@@ -105,8 +108,7 @@ export const Orders: React.FC = () => {
     return localOrders.filter((order) => {
       const matchesStatus =
         statusFilter === 'ALL' || 
-        order.status === statusFilter ||
-        (statusFilter === 'pending' && (order.status === 'pending' || order.status === 'processing'));
+        order.status === statusFilter;
 
       const q = searchQuery.toLowerCase().trim();
       const matchesSearch =
@@ -128,7 +130,7 @@ export const Orders: React.FC = () => {
     () => localOrders.filter((o) => o.status !== 'cancelled').reduce((sum, o) => sum + o.total, 0),
     [localOrders]
   );
-  const pendingCount = useMemo(() => localOrders.filter((o) => o.status === 'pending' || o.status === 'processing').length, [localOrders]);
+  const pendingCount = useMemo(() => localOrders.filter((o) => o.status === 'pending').length, [localOrders]);
   const shippingCount = useMemo(() => localOrders.filter((o) => o.status === 'shipping').length, [localOrders]);
   const deliveredCount = useMemo(() => localOrders.filter((o) => o.status === 'delivered' || o.status === 'paid').length, [localOrders]);
   const cancelledCount = useMemo(() => localOrders.filter((o) => o.status === 'cancelled').length, [localOrders]);
@@ -169,7 +171,14 @@ export const Orders: React.FC = () => {
         description: `Mã vận đơn GHN: ${ghnCode} • Trạng thái: Đang giao hàng`,
       });
     } catch (e: any) {
-      const errorMsg = e?.response?.data?.message ?? e?.message ?? 'Tạo đơn GHN thất bại.';
+      const errorMsg =
+        e?.response?.data?.message ??
+        e?.response?.data?.error?.message ??
+        (Array.isArray(e?.response?.data?.errors?.ghn) ? e.response.data.errors.ghn[0] : null) ??
+        (Array.isArray(e?.response?.data?.error?.details?.ghn) ? e.response.data.error.details.ghn[0] : null) ??
+        (typeof e?.response?.data?.error === 'string' ? e.response.data.error : null) ??
+        e?.message ??
+        'Tạo đơn GHN thất bại.';
       toast.error(`❌ ${errorMsg}`);
     }
   };

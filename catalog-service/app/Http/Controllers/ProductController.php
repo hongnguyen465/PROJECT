@@ -26,8 +26,7 @@ class ProductController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
 
-        $products = Product::with('category')
-            ->where('is_deleted', false)
+        $products = Product::with(['category', 'variants'])
             ->when($validated['category_id'] ?? null, fn ($query, $categoryId) => $query->where('category_id', $categoryId))
             ->when($validated['brand'] ?? null, fn ($query, $brand) => $query->where('brand', $brand))
             ->when($validated['search'] ?? null, function ($query, string $search): void {
@@ -66,14 +65,27 @@ class ProductController extends Controller
         $validated['name'] = trim($validated['name']);
         $validated['slug'] = !empty($validated['slug']) ? Str::slug($validated['slug']) : Str::slug($validated['name']);
         $validated['sku'] = Str::upper(trim($validated['sku']));
-        $validated['is_deleted'] = false;
 
-        $product = Product::create($validated)->load('category');
+        $variantsData = $request->input('variants');
+        $product = Product::create($validated);
+
+        if (is_array($variantsData)) {
+            foreach ($variantsData as $v) {
+                $product->variants()->create([
+                    'sku' => !empty($v['sku']) ? $v['sku'] : ($product->sku . '-' . Str::random(5)),
+                    'price' => $v['price'] ?? $product->price,
+                    'sale_price' => $v['sale_price'] ?? null,
+                    'stock' => isset($v['stock']) ? (int) $v['stock'] : 0,
+                    'attributes' => $v['attributes'] ?? [],
+                    'is_active' => $v['is_active'] ?? true,
+                ]);
+            }
+        }
 
         return response()->json([
             'success' => true,
             'message' => 'Tạo sản phẩm mới thành công.',
-            'data' => $product,
+            'data' => $product->load(['category', 'variants']),
             'errors' => null,
         ], 201);
     }
@@ -85,7 +97,7 @@ class ProductController extends Controller
      */
     public function show(Product $product): JsonResponse
     {
-        if ($product->is_deleted) {
+        if ($product->trashed()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Sản phẩm không tồn tại hoặc đã bị xóa.',
@@ -97,7 +109,7 @@ class ProductController extends Controller
         return response()->json([
             'success' => true,
             'message' => 'Lấy thông tin sản phẩm thành công.',
-            'data' => $product->load('category'),
+            'data' => $product->load(['category', 'variants']),
             'errors' => null,
         ]);
     }
@@ -109,7 +121,7 @@ class ProductController extends Controller
      */
     public function update(UpsertProductRequest $request, Product $product): JsonResponse
     {
-        if ($product->is_deleted) {
+        if ($product->trashed()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Không thể cập nhật sản phẩm đã bị xóa.',
@@ -131,10 +143,24 @@ class ProductController extends Controller
 
         $product->update($validated);
 
+        if ($request->has('variants') && is_array($request->input('variants'))) {
+            $product->variants()->delete();
+            foreach ($request->input('variants') as $v) {
+                $product->variants()->create([
+                    'sku' => !empty($v['sku']) ? $v['sku'] : ($product->sku . '-' . Str::random(5)),
+                    'price' => $v['price'] ?? $product->price,
+                    'sale_price' => $v['sale_price'] ?? null,
+                    'stock' => isset($v['stock']) ? (int) $v['stock'] : 0,
+                    'attributes' => $v['attributes'] ?? [],
+                    'is_active' => $v['is_active'] ?? true,
+                ]);
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Cập nhật sản phẩm thành công.',
-            'data' => $product->fresh()->load('category'),
+            'data' => $product->fresh()->load(['category', 'variants']),
             'errors' => null,
         ]);
     }
@@ -146,7 +172,6 @@ class ProductController extends Controller
      */
     public function destroy(Product $product): JsonResponse
     {
-        $product->update(['is_deleted' => true]);
         $product->delete();
 
         return response()->json([
@@ -172,7 +197,6 @@ class ProductController extends Controller
 
         $productIds = collect($validated['items'])->pluck('product_id')->unique();
         $products = Product::whereIn('id', $productIds)
-            ->where('is_deleted', false)
             ->get()
             ->keyBy('id');
 
@@ -276,7 +300,6 @@ class ProductController extends Controller
                     $qty = (int) $item['quantity'];
 
                     $product = Product::where('id', $pid)
-                        ->where('is_deleted', false)
                         ->lockForUpdate()
                         ->first();
 

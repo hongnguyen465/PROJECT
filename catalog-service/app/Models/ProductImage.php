@@ -12,6 +12,7 @@ class ProductImage extends Model
     protected function casts(): array
     {
         return [
+            'product_id' => 'integer',
             'is_primary' => 'boolean',
             'sort_order' => 'integer',
         ];

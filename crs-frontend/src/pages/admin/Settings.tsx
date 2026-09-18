@@ -1,17 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Settings as SettingsIcon, 
-  QrCode, 
   Image as ImageIcon, 
   Store, 
   Save, 
-  Copy, 
   Plus, 
   Edit3, 
   Trash2, 
   Eye, 
   EyeOff, 
-  CreditCard, 
   X,
   Layers,
   Tag,
@@ -22,18 +19,18 @@ import {
 import { toast } from 'sonner';
 import { 
   INITIAL_SHOP_SETTINGS, 
-  INITIAL_BANNER_SLIDES, 
-  POPULAR_VIETNAMESE_BANKS 
+  INITIAL_BANNER_SLIDES 
 } from '../../data/adminMockData';
 import { 
-  INITIAL_CATEGORIES, 
-  INITIAL_BRANDS, 
-  DEFAULT_CATEGORY,
-  DEFAULT_BRAND,
-  products as seedProducts 
-} from '../../data';
-import { fetchPaymentSettings, updatePaymentSettings } from '../../services/payment';
+  fetchCategories, 
+  fetchBrands, 
+  fetchProducts 
+} from '../../services/catalog';
 import type { BannerSlide, ShopSettings, CategoryItem, BrandItem, Product } from '../../types';
+
+// System default fallback items
+const DEFAULT_CATEGORY: CategoryItem = { id: 999, name: 'Khác', slug: 'khac' };
+const DEFAULT_BRAND: BrandItem = { id: 999, name: 'Khác' };
 
 // Helpers to identify and ensure system default items
 const isDefaultCategory = (c?: CategoryItem | null): boolean => {
@@ -76,9 +73,9 @@ const InfoTooltip: React.FC<{ content: string }> = ({ content }) => {
 };
 
 export const Settings: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'PAYMENT' | 'BANNERS' | 'CATEGORIES_BRANDS' | 'SHOP_INFO'>('PAYMENT');
+  const [activeTab, setActiveTab] = useState<'BANNERS' | 'CATEGORIES_BRANDS' | 'SHOP_INFO'>('BANNERS');
 
-  // Shop & VietQR Settings
+  // Shop Settings
   const [settings, setSettings] = useState<ShopSettings>(() => {
     const stored = localStorage.getItem('crs_shop_settings');
     if (!stored) return INITIAL_SHOP_SETTINGS;
@@ -88,27 +85,6 @@ export const Settings: React.FC = () => {
       return INITIAL_SHOP_SETTINGS;
     }
   });
-
-  // Sync Payment Settings from backend
-  useEffect(() => {
-    let active = true;
-    fetchPaymentSettings()
-      .then((ps) => {
-        if (active && ps && ps.account_number) {
-          setSettings((prev) => ({
-            ...prev,
-            bankName: ps.bank_code || prev.bankName,
-            bankAccountNo: ps.account_number || prev.bankAccountNo,
-            bankAccountName: ps.account_name || prev.bankAccountName,
-            transferSyntax: ps.syntax_prefix ? `${ps.syntax_prefix} {ORDER_ID}` : prev.transferSyntax,
-          }));
-        }
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, []);
 
   // Homepage Banners List
   const [banners, setBanners] = useState<BannerSlide[]>(() => {
@@ -121,37 +97,33 @@ export const Settings: React.FC = () => {
     }
   });
 
-  // Categories & Brands State synced with localStorage (guaranteed to include system defaults)
-  const [categoriesList, setCategoriesList] = useState<CategoryItem[]>(() => {
-    const stored = localStorage.getItem('crs_categories');
-    if (!stored) return ensureDefaultCategory(INITIAL_CATEGORIES);
-    try {
-      return ensureDefaultCategory(JSON.parse(stored) as CategoryItem[]);
-    } catch {
-      return ensureDefaultCategory(INITIAL_CATEGORIES);
-    }
-  });
+  // Categories, Brands & Products State loaded from API
+  const [categoriesList, setCategoriesList] = useState<CategoryItem[]>([DEFAULT_CATEGORY]);
+  const [brandsList, setBrandsList] = useState<BrandItem[]>([DEFAULT_BRAND]);
+  const [productsList, setProductsList] = useState<Product[]>([]);
 
-  const [brandsList, setBrandsList] = useState<BrandItem[]>(() => {
-    const stored = localStorage.getItem('crs_brands');
-    if (!stored) return ensureDefaultBrand(INITIAL_BRANDS);
-    try {
-      return ensureDefaultBrand(JSON.parse(stored) as BrandItem[]);
-    } catch {
-      return ensureDefaultBrand(INITIAL_BRANDS);
-    }
-  });
-
-  // Products to calculate linked counts
-  const [productsList, setProductsList] = useState<Product[]>(() => {
-    const stored = localStorage.getItem('crs_admin_products');
-    if (!stored) return seedProducts;
-    try {
-      return JSON.parse(stored) as Product[];
-    } catch {
-      return seedProducts;
-    }
-  });
+  useEffect(() => {
+    let isMounted = true;
+    Promise.allSettled([
+      fetchCategories(),
+      fetchBrands(),
+      fetchProducts({ per_page: 100 }),
+    ]).then(([cats, brs, prods]) => {
+      if (!isMounted) return;
+      if (cats.status === 'fulfilled' && Array.isArray(cats.value) && cats.value.length > 0) {
+        setCategoriesList(ensureDefaultCategory(cats.value));
+      }
+      if (brs.status === 'fulfilled' && Array.isArray(brs.value) && brs.value.length > 0) {
+        setBrandsList(ensureDefaultBrand(brs.value));
+      }
+      if (prods.status === 'fulfilled' && Array.isArray(prods.value)) {
+        setProductsList(prods.value);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Banner Modal State
   const [bannerModalOpen, setBannerModalOpen] = useState(false);
@@ -191,25 +163,11 @@ export const Settings: React.FC = () => {
     }
   };
 
-  // Persist Settings
-  const handleSaveSettings = async (e: React.FormEvent) => {
+  // Persist Shop Settings
+  const handleSaveSettings = (e: React.FormEvent) => {
     e.preventDefault();
     localStorage.setItem('crs_shop_settings', JSON.stringify(settings));
-
-    // Sync to payment-service via Gateway
-    try {
-      await updatePaymentSettings({
-        bank_code: settings.bankName || 'MB',
-        bank_name: selectedBank.name,
-        account_number: settings.bankAccountNo || '0977777777',
-        account_name: settings.bankAccountName || 'STRIKER SPORT PRO',
-        syntax_prefix: (settings.transferSyntax || 'STR').replace('{ORDER_ID}', '').replace('{ORDER_CODE}', '').trim() || 'STR',
-      });
-    } catch {
-      // Offline fallback
-    }
-
-    toast.success('Đã lưu cấu hình cửa hàng & VietQR thành công!');
+    toast.success('Đã lưu thông tin cửa hàng thành công!');
   };
 
   // Persist Banners
@@ -225,23 +183,6 @@ export const Settings: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('crs_brands', JSON.stringify(brandsList));
   }, [brandsList]);
-
-  // Copy helper
-  const handleCopy = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    toast.success(`Đã sao chép ${label}: ${text}`);
-  };
-
-  // VietQR Dynamic URL Generator (Live Preview from actual inputs)
-  const selectedBank = POPULAR_VIETNAMESE_BANKS.find((b) => b.code === settings.bankName) || POPULAR_VIETNAMESE_BANKS[0];
-  const cleanBankCode = settings.bankName?.trim() || selectedBank.code;
-  const cleanAccountNo = settings.bankAccountNo?.trim() || '';
-  const cleanAccountName = settings.bankAccountName?.trim() || '';
-  const cleanSyntax = (settings.transferSyntax || 'STRIKER {ORDER_ID}').trim();
-
-  const dynamicVietQRUrl = cleanBankCode && cleanAccountNo
-    ? `https://img.vietqr.io/image/${cleanBankCode}-${cleanAccountNo}-compact2.png?addInfo=${encodeURIComponent(cleanSyntax)}&accountName=${encodeURIComponent(cleanAccountName)}`
-    : '';
 
   // Banner Handlers
   const handleOpenAddBanner = () => {
@@ -574,17 +515,6 @@ export const Settings: React.FC = () => {
         {/* Tab Navigation Pills */}
         <div className="flex flex-wrap items-center p-1.5 bg-zinc-950/80 border border-zinc-800 rounded-2xl gap-1">
           <button
-            onClick={() => setActiveTab('PAYMENT')}
-            className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
-              activeTab === 'PAYMENT'
-                ? 'bg-lime-400 text-zinc-950 shadow-md shadow-lime-400/20'
-                : 'text-zinc-400 hover:text-white'
-            }`}
-          >
-            <QrCode className="w-3.5 h-3.5" />
-            <span>Thanh toán & VietQR</span>
-          </button>
-          <button
             onClick={() => setActiveTab('BANNERS')}
             className={`flex items-center gap-2 px-3.5 py-2 rounded-xl text-xs font-bold transition ${
               activeTab === 'BANNERS'
@@ -619,151 +549,6 @@ export const Settings: React.FC = () => {
           </button>
         </div>
       </div>
-
-      {/* 2. Tab 1: Payment & Dynamic VietQR */}
-      {activeTab === 'PAYMENT' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
-          {/* Left Form (7 Cols) */}
-          <div className="lg:col-span-7 bg-zinc-900/60 backdrop-blur-xl border border-zinc-800/80 p-6 sm:p-8 rounded-3xl shadow-2xl">
-            <div className="flex items-center gap-2 pb-4 border-b border-zinc-800">
-              <CreditCard className="w-5 h-5 text-lime-400" />
-              <h2 className="text-sm font-bold text-white uppercase tracking-wide">
-                Cấu hình tài khoản ngân hàng thụ hưởng
-              </h2>
-            </div>
-
-            <form onSubmit={handleSaveSettings} className="mt-6 space-y-5">
-              {/* Select Bank */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                  Ngân hàng thụ hưởng (VietQR Partner) *
-                </label>
-                <select
-                  value={settings.bankName || 'MBBANK'}
-                  onChange={(e) => setSettings({ ...settings, bankName: e.target.value })}
-                  className="w-full bg-zinc-950 border border-zinc-800 text-sm text-zinc-200 px-4 py-3 rounded-xl focus:outline-none focus:border-zinc-700 font-medium"
-                >
-                  {POPULAR_VIETNAMESE_BANKS.map((b) => (
-                    <option key={b.code} value={b.code}>
-                      {b.name} ({b.code})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Account Number & Account Name */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                    Số tài khoản (STK) *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={settings.bankAccountNo || ''}
-                    onChange={(e) => setSettings({ ...settings, bankAccountNo: e.target.value })}
-                    placeholder="Nhập số tài khoản ngân hàng"
-                    className="w-full bg-zinc-950 border border-zinc-800 text-sm font-mono text-zinc-200 placeholder:text-zinc-500 px-4 py-3 rounded-xl focus:outline-none focus:border-zinc-700"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-zinc-300 mb-2">
-                    Tên chủ tài khoản *
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={settings.bankAccountName || ''}
-                    onChange={(e) => setSettings({ ...settings, bankAccountName: e.target.value.toUpperCase() })}
-                    placeholder="Nhập tên chủ tài khoản (in hoa không dấu)"
-                    className="w-full bg-zinc-950 border border-zinc-800 text-sm text-zinc-200 placeholder:text-zinc-500 px-4 py-3 rounded-xl focus:outline-none focus:border-zinc-700 uppercase tracking-wider"
-                  />
-                </div>
-              </div>
-
-              {/* Transfer Syntax Template with Inline Tooltip */}
-              <div>
-                <label className="block text-xs font-semibold text-zinc-300 mb-2 flex items-center">
-                  <span>Cú pháp nội dung chuyển khoản</span>
-                  <InfoTooltip content="Hệ thống tự động thay thế {ORDER_ID} bằng mã đơn hàng thực tế khi khách quét mã." />
-                </label>
-                <input
-                  type="text"
-                  value={settings.transferSyntax || ''}
-                  onChange={(e) => setSettings({ ...settings, transferSyntax: e.target.value })}
-                  placeholder="STRIKER {ORDER_ID}"
-                  className="w-full bg-zinc-950 border border-zinc-800 text-sm font-mono text-zinc-200 placeholder:text-zinc-500 px-4 py-3 rounded-xl focus:outline-none focus:border-zinc-700"
-                />
-              </div>
-
-              {/* Submit Save */}
-              <div className="pt-4 border-t border-zinc-800 flex justify-end">
-                <button
-                  type="submit"
-                  className="inline-flex items-center gap-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-lime-400 to-lime-500 text-zinc-950 font-black text-xs uppercase tracking-wider hover:from-lime-300 hover:to-lime-400 shadow-xl shadow-lime-400/20 hover:scale-105 transition-all cursor-pointer"
-                >
-                  <Save className="w-4 h-4 stroke-[3]" />
-                  <span>Lưu cấu hình VietQR</span>
-                </button>
-              </div>
-            </form>
-          </div>
-
-          {/* Right Live VietQR Preview (5 Cols) */}
-          <div className="lg:col-span-5 bg-zinc-900/60 backdrop-blur-xl border border-zinc-800/80 p-6 sm:p-8 rounded-3xl shadow-2xl flex flex-col justify-between">
-            <div>
-              <div className="flex items-center gap-2 pb-4 border-b border-zinc-800">
-                <QrCode className="w-4 h-4 text-zinc-400" />
-                <h3 className="text-sm font-bold text-white uppercase tracking-wide">
-                  Xem trước mã VietQR trực tiếp
-                </h3>
-              </div>
-
-              {/* VietQR Live Image Render Card */}
-              <div className="mt-8 flex flex-col items-center">
-                {dynamicVietQRUrl ? (
-                  <div className="p-3.5 bg-white rounded-2xl shadow-xl border border-zinc-200 max-w-[240px] w-full transition-all">
-                    <img
-                      src={dynamicVietQRUrl}
-                      alt="VietQR Live Preview"
-                      className="w-full h-auto rounded-lg object-contain"
-                    />
-                  </div>
-                ) : (
-                  <div className="w-[220px] h-[220px] rounded-2xl border border-dashed border-zinc-800 bg-zinc-950/50 flex flex-col items-center justify-center p-4 text-center text-zinc-500 text-xs">
-                    <QrCode className="w-10 h-10 mb-2 text-zinc-600 stroke-[1.5]" />
-                    <span>Vui lòng nhập Số tài khoản để tạo mã VietQR</span>
-                  </div>
-                )}
-
-                {/* Account Details */}
-                <div className="mt-5 text-center space-y-1">
-                  <div className="text-xs font-medium text-zinc-400">
-                    {selectedBank.name}
-                  </div>
-                  <div className="text-sm font-mono font-bold text-white flex items-center justify-center gap-1.5">
-                    <span>{cleanAccountNo || '---'}</span>
-                    {cleanAccountNo && (
-                      <button
-                        type="button"
-                        onClick={() => handleCopy(cleanAccountNo, 'Số tài khoản')}
-                        className="p-1 hover:text-lime-400 transition text-zinc-500 cursor-pointer"
-                        title="Sao chép số tài khoản"
-                      >
-                        <Copy className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                  <div className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
-                    {cleanAccountName || '---'}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* 3. Tab 2: Homepage Banners */}
       {activeTab === 'BANNERS' && (

@@ -13,15 +13,33 @@ import {
   Package
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { fetchCoupons } from '../../services/coupons';
+import { fetchCoupons, createCoupon, updateCoupon, deleteCoupon } from '../../services/coupons';
 import type { Coupon, CouponType } from '../../types';
+
+export const normalizeCoupon = (raw: any): Coupon => ({
+  id: String(raw.id ?? raw.code),
+  code: String(raw.code ?? ''),
+  title: String(raw.title ?? raw.code ?? ''),
+  description: String(raw.description ?? ''),
+  discountType: raw.discountType ?? (raw.type === 'freeship' ? 'freeship' : raw.type === 'percent' ? 'percent' : 'fixed'),
+  discountValue: Number(raw.discountValue ?? raw.value ?? 0),
+  minOrderValue: Number(raw.minOrderValue ?? raw.min_order_amount ?? 0),
+  maxDiscount: raw.maxDiscount != null ? Number(raw.maxDiscount) : raw.max_discount_amount != null ? Number(raw.max_discount_amount) : undefined,
+  totalUsageLimit: Number(raw.totalUsageLimit ?? raw.usage_limit ?? 100),
+  usageCount: Number(raw.usageCount ?? raw.used_count ?? 0),
+  expiresAt: String(raw.expiresAt ?? raw.expires_at ?? ''),
+  isActive: Boolean(raw.isActive ?? raw.is_active ?? true),
+});
 
 export const Vouchers: React.FC = () => {
   const [couponsList, setCouponsList] = useState<Coupon[]>(() => {
     const stored = localStorage.getItem('crs_admin_vouchers');
     if (stored) {
       try {
-        return JSON.parse(stored) as Coupon[];
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          return parsed.map(normalizeCoupon);
+        }
       } catch {
         return [];
       }
@@ -34,7 +52,7 @@ export const Vouchers: React.FC = () => {
       .then((res) => {
         const list = Array.isArray(res) ? res : res?.data ?? [];
         if (list.length > 0) {
-          setCouponsList(list);
+          setCouponsList(list.map(normalizeCoupon));
         }
       })
       .catch(() => {});
@@ -68,42 +86,60 @@ export const Vouchers: React.FC = () => {
   // Today ISO Date for min date restriction
   const todayDateStr = useMemo(() => new Date().toISOString().split('T')[0], []);
 
-  // Format date helper: YYYY-MM-DD -> DD/MM/YYYY
-  const formatDisplayDate = (dateStr: string): string => {
+  // Format date helper: YYYY-MM-DD / ISO -> DD/MM/YYYY
+  const formatDisplayDate = (dateStr?: string): string => {
     if (!dateStr) return '';
-    if (dateStr.includes('-')) {
-      const [y, m, d] = dateStr.split('-');
-      return `${d}/${m}/${y}`;
+    try {
+      if (dateStr.includes('T') || (dateStr.includes('-') && dateStr.split('-')[0].length === 4)) {
+        const d = new Date(dateStr);
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleDateString('vi-VN');
+        }
+      }
+      if (dateStr.includes('/')) {
+        return dateStr;
+      }
+    } catch {
+      return String(dateStr);
     }
-    return dateStr;
+    return String(dateStr);
   };
 
-  // Parse date helper: DD/MM/YYYY -> YYYY-MM-DD
-  const parseToInputDate = (dateStr: string): string => {
+  // Parse date helper: DD/MM/YYYY / ISO -> YYYY-MM-DD
+  const parseToInputDate = (dateStr?: string): string => {
     if (!dateStr) return todayDateStr;
-    if (dateStr.includes('/')) {
-      const [d, m, y] = dateStr.split('/');
-      return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+    try {
+      if (dateStr.includes('/')) {
+        const [d, m, y] = dateStr.split('/');
+        return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
+      }
+      if (dateStr.includes('T')) {
+        return dateStr.split('T')[0];
+      }
+    } catch {
+      return todayDateStr;
     }
     return dateStr;
   };
 
   // Check if a voucher is expired
-  const checkIsExpired = (expiryStr: string): boolean => {
+  const checkIsExpired = (expiryStr?: string): boolean => {
     if (!expiryStr) return false;
-    let date: Date;
-    if (expiryStr.includes('/')) {
-      const [d, m, y] = expiryStr.split('/');
-      date = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10), 23, 59, 59);
-    } else if (expiryStr.includes('-')) {
-      const [y, m, d] = expiryStr.split('-');
-      date = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10), 23, 59, 59);
-    } else {
-      date = new Date(expiryStr);
+    try {
+      let date: Date;
+      if (expiryStr.includes('/')) {
+        const [d, m, y] = expiryStr.split('/');
+        date = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10), 23, 59, 59);
+      } else {
+        date = new Date(expiryStr);
+      }
+      if (isNaN(date.getTime())) return false;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return date < today;
+    } catch {
+      return false;
     }
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    return date < today;
   };
 
   // Prevent invalid characters in number inputs
@@ -235,7 +271,21 @@ export const Vouchers: React.FC = () => {
     const maxDiscountNum = formMaxDiscount ? parseInt(formMaxDiscount, 10) : undefined;
     const formattedExpiry = formatDisplayDate(formExpiresAt);
 
+    const backendPayload: any = {
+      code: cleanCode,
+      title: formTitle.trim(),
+      description: formDescription.trim(),
+      type: formType,
+      value: valueNum,
+      min_order_amount: minOrderNum,
+      max_discount_amount: maxDiscountNum,
+      usage_limit: limitNum,
+      expires_at: formExpiresAt,
+      is_active: true,
+    };
+
     if (editingCoupon) {
+      updateCoupon(editingCoupon.id, backendPayload).catch(() => {});
       setCouponsList((prev) =>
         prev.map((c) =>
           c.id === editingCoupon.id
@@ -256,6 +306,7 @@ export const Vouchers: React.FC = () => {
       );
       toast.success(`Đã cập nhật Voucher "${cleanCode}" thành công!`);
     } else {
+      createCoupon(backendPayload).catch(() => {});
       const newVoucher: Coupon = {
         id: `c-${Date.now()}`,
         code: cleanCode,
@@ -283,6 +334,7 @@ export const Vouchers: React.FC = () => {
       prev.map((c) => {
         if (c.id === id) {
           const nextState = c.isActive === false ? true : false;
+          updateCoupon(id, { is_active: nextState } as any).catch(() => {});
           toast.info(`${nextState ? 'Đã kích hoạt' : 'Đã tạm dừng'} Voucher ${c.code}`);
           return { ...c, isActive: nextState };
         }
@@ -294,6 +346,7 @@ export const Vouchers: React.FC = () => {
   // Soft Delete Voucher
   const handleDeleteVoucher = (id: string, code: string) => {
     if (window.confirm(`Bạn có chắc muốn xóa Voucher "${code}" vào thùng rác?`)) {
+      deleteCoupon(id).catch(() => {});
       setCouponsList((prev) =>
         prev.map((c) => (c.id === id ? { ...c, is_deleted: true, isDeleted: true } : c))
       );
@@ -444,9 +497,9 @@ export const Vouchers: React.FC = () => {
       {filteredCoupons.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {filteredCoupons.map((coupon) => {
-            const used = coupon.usageCount || 0;
-            const limit = coupon.totalUsageLimit || 100;
-            const usagePercent = Math.min(100, Math.round((used / limit) * 100));
+            const used = Number(coupon.usageCount ?? 0);
+            const limit = Number(coupon.totalUsageLimit ?? 100);
+            const usagePercent = Math.min(100, Math.round((used / (limit || 1)) * 100));
             const isDepleted = used >= limit;
             const isExpired = checkIsExpired(coupon.expiresAt);
 
@@ -541,7 +594,7 @@ export const Vouchers: React.FC = () => {
                     {coupon.description}
                   </p>
                   <div className="text-[11px] font-mono text-zinc-400 pt-1">
-                    Đơn tối thiểu: <b className="text-white">{coupon.minOrderValue.toLocaleString('vi-VN')}₫</b>
+                    Đơn tối thiểu: <b className="text-white">{(Number(coupon.minOrderValue ?? 0)).toLocaleString('vi-VN')}₫</b>
                   </div>
                 </div>
 

@@ -40,13 +40,22 @@ export const AdminLayout: React.FC = () => {
     }
   }, []);
 
-  // Fetch real-time pending count from backend API on mount & on route changes
+  // Fetch real-time pending count from backend API on mount & on route changes / custom events
   useEffect(() => {
     void loadStats();
     const interval = setInterval(() => {
       void loadStats();
     }, 15000);
-    return () => clearInterval(interval);
+
+    const handleOrderChange = () => {
+      void loadStats();
+    };
+    window.addEventListener('order-status-changed', handleOrderChange);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('order-status-changed', handleOrderChange);
+    };
   }, [loadStats, location.pathname]);
 
   const [notifications, setNotifications] = useState([
@@ -110,7 +119,7 @@ export const AdminLayout: React.FC = () => {
     },
     { path: '/admin/vouchers', label: 'Quản lý Voucher', icon: TicketPercent },
     { path: '/admin/customers', label: 'Quản lý Khách hàng', icon: Users },
-    { path: '/admin/settings', label: 'Cấu hình Shop & VietQR', icon: Settings },
+    { path: '/admin/settings', label: 'Cài đặt Cửa hàng', icon: Settings },
   ];
 
   const handleLogout = () => {

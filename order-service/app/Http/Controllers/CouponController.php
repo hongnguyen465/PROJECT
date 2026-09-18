@@ -19,7 +19,7 @@ class CouponController extends Controller
     {
         $validated = $request->validate([
             'search' => ['nullable', 'string', 'max:100'],
-            'type' => ['nullable', 'string', 'in:ALL,fixed,freeship'],
+            'type' => ['nullable', 'string', 'in:ALL,fixed,freeship,percent'],
             'status' => ['nullable', 'string', 'in:ALL,ACTIVE,ENDED'],
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
         ]);
@@ -27,7 +27,6 @@ class CouponController extends Controller
         $now = Carbon::now();
 
         $coupons = Coupon::query()
-            ->where('is_deleted', false)
             ->when($validated['search'] ?? null, function ($q, $search): void {
                 $q->where(function ($sub) use ($search): void {
                     $sub->where('code', 'like', "%{$search}%")
@@ -38,23 +37,20 @@ class CouponController extends Controller
             ->when(($validated['type'] ?? 'ALL') !== 'ALL', fn ($q) => $q->where('type', $validated['type']))
             ->when(($validated['status'] ?? 'ALL') === 'ACTIVE', function ($q) use ($now): void {
                 $q->where(function ($sub) use ($now): void {
-                    $sub->whereNull('expires_at')->orWhere('expires_at', '>=', $now->startOfDay());
-                })->where(function ($sub): void {
-                    $sub->whereNull('usage_limit')->orWhereRaw('used_count < usage_limit');
+                    $sub->whereNull('expires_at')
+                        ->orWhere('expires_at', '>=', $now);
                 });
             })
             ->when(($validated['status'] ?? 'ALL') === 'ENDED', function ($q) use ($now): void {
-                $q->where(function ($sub) use ($now): void {
-                    $sub->where('expires_at', '<', $now->startOfDay())
-                        ->orWhereRaw('used_count >= usage_limit');
-                });
+                $q->where('expires_at', '<', $now);
             })
             ->latest()
-            ->paginate($validated['per_page'] ?? 50);
+            ->paginate($validated['per_page'] ?? 15)
+            ->withQueryString();
 
         return response()->json([
             'success' => true,
-            'message' => 'Lấy danh sách voucher thành công.',
+            'message' => 'Lấy danh sách mã giảm giá thành công.',
             'data' => $coupons->items(),
             'pagination' => [
                 'current_page' => $coupons->currentPage(),
@@ -67,7 +63,7 @@ class CouponController extends Controller
     }
 
     /**
-     * Create a new coupon/voucher.
+     * Issue a new coupon.
      *
      * @group Coupon Management
      */
@@ -75,9 +71,9 @@ class CouponController extends Controller
     {
         $validated = $request->validate([
             'code' => ['required', 'string', 'max:50', 'regex:/^[A-Z0-9_-]+$/', 'unique:coupons,code'],
-            'title' => ['required', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'type' => ['required', 'string', 'in:fixed,freeship'],
+            'title' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'type' => ['required', 'string', 'in:fixed,freeship,percent'],
             'value' => ['required', 'numeric', 'min:0'],
             'min_order_amount' => ['nullable', 'numeric', 'min:0'],
             'max_discount_amount' => ['nullable', 'numeric', 'min:0'],
@@ -87,10 +83,9 @@ class CouponController extends Controller
         ]);
 
         $validated['code'] = Str::upper(trim($validated['code']));
-        $validated['title'] = trim($validated['title']);
+        $validated['title'] = !empty($validated['title']) ? trim($validated['title']) : $validated['code'];
         $validated['description'] = isset($validated['description']) ? trim($validated['description']) : null;
         $validated['used_count'] = 0;
-        $validated['is_deleted'] = false;
 
         if ($validated['type'] === 'freeship') {
             $validated['value'] = 0;
@@ -120,7 +115,7 @@ class CouponController extends Controller
      */
     public function show(Coupon $coupon): JsonResponse
     {
-        if ($coupon->is_deleted) {
+        if ($coupon->trashed()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Voucher không tồn tại hoặc đã bị xóa.',
@@ -144,7 +139,7 @@ class CouponController extends Controller
      */
     public function update(Request $request, Coupon $coupon): JsonResponse
     {
-        if ($coupon->is_deleted) {
+        if ($coupon->trashed()) {
             return response()->json([
                 'success' => false,
                 'message' => 'Không thể cập nhật voucher đã bị xóa.',
@@ -155,9 +150,9 @@ class CouponController extends Controller
 
         $validated = $request->validate([
             'code' => ['sometimes', 'string', 'max:50', 'regex:/^[A-Z0-9_-]+$/', 'unique:coupons,code,'.$coupon->id],
-            'title' => ['sometimes', 'string', 'max:255'],
-            'description' => ['nullable', 'string'],
-            'type' => ['sometimes', 'string', 'in:fixed,freeship'],
+            'title' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'description' => ['sometimes', 'nullable', 'string'],
+            'type' => ['sometimes', 'string', 'in:fixed,freeship,percent'],
             'value' => ['sometimes', 'numeric', 'min:0'],
             'min_order_amount' => ['nullable', 'numeric', 'min:0'],
             'max_discount_amount' => ['nullable', 'numeric', 'min:0'],
@@ -193,7 +188,7 @@ class CouponController extends Controller
      */
     public function destroy(Coupon $coupon): JsonResponse
     {
-        $coupon->update(['is_deleted' => true]);
+        $coupon->delete();
 
         return response()->json([
             'success' => true,
@@ -211,17 +206,36 @@ class CouponController extends Controller
     public function apply(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'code' => ['required', 'string'],
-            'subtotal' => ['required', 'numeric', 'min:0'],
-            'shipping_fee' => ['sometimes', 'numeric', 'min:0'],
+            'code' => ['required_without:coupon_code', 'nullable', 'string'],
+            'coupon_code' => ['required_without:code', 'nullable', 'string'],
+            'subtotal' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'order_amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'total' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'amount' => ['sometimes', 'nullable', 'numeric', 'min:0'],
+            'shipping_fee' => ['sometimes', 'nullable', 'numeric', 'min:0'],
         ]);
 
-        $cleanCode = Str::upper(trim($validated['code']));
-        $subtotal = (float) $validated['subtotal'];
-        $shippingFee = (float) ($validated['shipping_fee'] ?? 30000);
+        $rawCode = $validated['code'] ?? $validated['coupon_code'] ?? $request->input('code') ?? $request->input('coupon_code') ?? '';
+        $cleanCode = Str::upper(trim((string) $rawCode));
+
+        $subtotal = (float) (
+            $validated['subtotal']
+            ?? $validated['order_amount']
+            ?? $validated['total']
+            ?? $validated['amount']
+            ?? $request->input('subtotal')
+            ?? $request->input('order_amount')
+            ?? $request->input('total')
+            ?? 0
+        );
+
+        $shippingFee = (float) (
+            $validated['shipping_fee']
+            ?? $request->input('shipping_fee')
+            ?? 30000
+        );
 
         $coupon = Coupon::where('code', $cleanCode)
-            ->where('is_deleted', false)
             ->first();
 
         if (! $coupon || ! $coupon->is_active) {
@@ -251,7 +265,7 @@ class CouponController extends Controller
             ], 422);
         }
 
-        if ($subtotal < (float) $coupon->min_order_amount) {
+        if ($subtotal > 0 && $subtotal < (float) $coupon->min_order_amount) {
             return response()->json([
                 'success' => false,
                 'message' => 'Đơn hàng tối thiểu '.number_format($coupon->min_order_amount, 0, ',', '.').'đ để sử dụng mã này.',
@@ -262,7 +276,7 @@ class CouponController extends Controller
 
         $discountAmount = 0;
         if ($coupon->type === 'fixed') {
-            $discountAmount = min($subtotal, (float) $coupon->value);
+            $discountAmount = min($subtotal > 0 ? $subtotal : (float) $coupon->value, (float) $coupon->value);
         } elseif ($coupon->type === 'percent') {
             $rawDiscount = ($subtotal * (float) $coupon->value) / 100;
             $discountAmount = ($coupon->max_discount_amount && (float) $coupon->max_discount_amount > 0)
@@ -281,6 +295,10 @@ class CouponController extends Controller
                 'type' => $coupon->type,
                 'code' => $coupon->code,
             ],
+            'coupon' => $coupon,
+            'discount_amount' => $discountAmount,
+            'type' => $coupon->type,
+            'code' => $coupon->code,
             'errors' => null,
         ]);
     }

@@ -32,7 +32,7 @@ class MomoController extends Controller
         return $this->redirectToMomo($order, $this->newTransaction($order), $momo);
     }
 
-    public function callback(Request $request, GhnService $ghnOrders, MomoService $momo)
+    public function callback(Request $request, MomoService $momo)
     {
         Log::info('MoMo callback received', [
             'payload' => $request->except('signature'),
@@ -61,10 +61,10 @@ class MomoController extends Controller
                 ], 400);
             }
 
-            return redirect('http://localhost:5173/orders?status=failed');
+            return redirect(rtrim((string) config('app.frontend_url', 'http://localhost:5173'), '/') . '/orders?status=failed');
         }
 
-        $this->completePayment($request->all(), $ghnOrders, $momo);
+        $this->completePayment($request->all(), $momo);
 
         if ($request->wantsJson()) {
             return response()->json([
@@ -74,10 +74,10 @@ class MomoController extends Controller
             ]);
         }
 
-        return redirect('http://localhost:5173/orders?status=success');
+        return redirect(rtrim((string) config('app.frontend_url', 'http://localhost:5173'), '/') . '/orders?status=success');
     }
 
-    public function ipn(Request $request, GhnService $ghnOrders, MomoService $momo)
+    public function ipn(Request $request, MomoService $momo)
     {
         Log::info('MoMo IPN received', [
             'payload' => $request->except('signature'),
@@ -85,7 +85,7 @@ class MomoController extends Controller
         ]);
 
         if ($momo->isValidSuccessfulResponse($request->all())) {
-            $this->completePayment($request->all(), $ghnOrders, $momo);
+            $this->completePayment($request->all(), $momo);
         } elseif ($momo->isValidResponse($request->all())) {
             $this->markFailed($request->all(), $momo);
         }
@@ -132,9 +132,9 @@ class MomoController extends Controller
             : redirect()->route('user.orders.index')->with('error', 'Không thể kết nối tới MoMo.');
     }
 
-    private function completePayment(array $payload, GhnService $ghnOrders, MomoService $momo): string
+    private function completePayment(array $payload, MomoService $momo): string
     {
-        $result = DB::transaction(function () use ($payload, $momo) {
+        return DB::transaction(function () use ($payload, $momo) {
             $transaction = PaymentTransaction::where('gateway', 'momo')
                 ->where('gateway_order_id', $payload['orderId'] ?? '')
                 ->lockForUpdate()
@@ -149,11 +149,7 @@ class MomoController extends Controller
                 return 'invalid';
             }
 
-            if ($order->ghn_code || ($order->ghn_order_code ?? null)) {
-                return 'already_created';
-            }
-
-            if ($order->order_status === 'paid' || $order->payment_status === 'paid') {
+            if ($order->payment_status === 'paid') {
                 return 'already_paid';
             }
 
@@ -162,40 +158,15 @@ class MomoController extends Controller
                 return 'invalid';
             }
 
+            // Cập nhật trạng thái thanh toán là paid, order_status giữ nguyên (pending)
             $order->update([
-                'status' => 'processing',
-                'order_status' => 'processing',
                 'payment_status' => 'paid',
             ]);
 
             $momo->markPaid($transaction, $payload);
 
-            return ['create', $order->id];
+            return 'success';
         });
-
-        if (!is_array($result)) {
-            return (string) $result;
-        }
-
-        $order = Order::with('items')->find($result[1]);
-        try {
-            $response = $ghnOrders->createShippingOrder($order);
-            if (!empty($response['order_code'])) {
-                $order->update([
-                    'ghn_code' => $response['order_code'],
-                    'order_status' => 'shipping',
-                    'status' => 'shipping',
-                ]);
-                return 'created';
-            }
-        } catch (\Exception $e) {
-            Log::error('GHN order failed after MoMo payment', [
-                'order_id' => $order->id,
-                'error' => $e->getMessage(),
-            ]);
-        }
-
-        return 'failed';
     }
 
     private function markFailed(array $payload, MomoService $momo): void

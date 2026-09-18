@@ -16,10 +16,10 @@ class GhnService
 
     public function __construct()
     {
-        $this->token = (string) config('services.ghn.token', '84d13de2-aa85-11f1-a973-aee5264794df');
-        $this->shopId = (int) config('services.ghn.shop_id', 216452);
-        $this->baseUrl = rtrim((string) config('services.ghn.base_url', 'https://dev-online-gateway.ghn.vn/shiip/public-api'), '/');
-        $this->fromDistrictId = (int) config('services.ghn.from_district_id', 1450);
+        $this->token = (string) config('services.ghn.token', env('GHN_TOKEN', '84d13de2-aa85-11f1-a973-aee5264794df'));
+        $this->shopId = (int) config('services.ghn.shop_id', env('GHN_SHOP_ID', 217482));
+        $this->baseUrl = rtrim((string) config('services.ghn.base_url', env('GHN_BASE_URL', 'https://dev-online-gateway.ghn.vn/shiip/public-api')), '/');
+        $this->fromDistrictId = (int) config('services.ghn.from_district_id', env('GHN_FROM_DISTRICT_ID', 1482));
     }
 
     /**
@@ -28,6 +28,7 @@ class GhnService
     public function getProvinces(): array
     {
         $response = Http::withHeaders([
+            'Token' => $this->token,
             'token' => $this->token,
             'Content-Type' => 'application/json',
         ])->get("{$this->baseUrl}/master-data/province");
@@ -51,6 +52,7 @@ class GhnService
     public function getDistricts(int $provinceId): array
     {
         $response = Http::withHeaders([
+            'Token' => $this->token,
             'token' => $this->token,
             'Content-Type' => 'application/json',
         ])->post("{$this->baseUrl}/master-data/district", [
@@ -71,6 +73,7 @@ class GhnService
     public function getWards(int $districtId): array
     {
         $response = Http::withHeaders([
+            'Token' => $this->token,
             'token' => $this->token,
             'Content-Type' => 'application/json',
         ])->get("{$this->baseUrl}/master-data/ward", [
@@ -97,7 +100,10 @@ class GhnService
         int $height = 10,
         int $insuranceValue = 0
     ): array {
+        $shopId = (int) config('services.ghn.shop_id', env('GHN_SHOP_ID', $this->shopId));
+
         $payload = [
+            'shop_id' => $shopId,
             'from_district_id' => $this->fromDistrictId,
             'to_district_id' => $toDistrictId,
             'to_ward_code' => (string) $toWardCode,
@@ -111,7 +117,10 @@ class GhnService
         ];
 
         $headers = [
-            'token' => $this->token,
+            'Token' => (string) config('services.ghn.token', env('GHN_TOKEN', $this->token)),
+            'token' => (string) config('services.ghn.token', env('GHN_TOKEN', $this->token)),
+            'ShopId' => $shopId,
+            'shop_id' => $shopId,
             'Content-Type' => 'application/json',
         ];
 
@@ -150,32 +159,43 @@ class GhnService
             ]];
         }
 
+        $toDistrictId = !empty($customData['to_district_id']) ? (int) $customData['to_district_id'] : 1442;
+        $toWardCode = !empty($customData['to_ward_code']) ? (string) $customData['to_ward_code'] : '20110';
+        $shopId = (int) config('services.ghn.shop_id', env('GHN_SHOP_ID', $this->shopId));
+
         $payload = [
+            'shop_id' => $shopId,
+            'client_order_code' => $order->order_number ?: ($order->order_code ?: ('ORD-' . $order->id)),
             'payment_type_id' => ($order->payment_method === 'cod') ? 2 : 1, // 2: Người nhận thanh toán COD
-            'note' => $order->note ?? 'Hàng giá trị cao, vui lòng giao giờ hành chính.',
-            'required_note' => 'CHOXEMHANGKHONGTHU',
+            'note' => $customData['note'] ?? $order->note ?? 'Hàng giá trị cao, vui lòng cho xem và thử hàng.',
+            'required_note' => $customData['required_note'] ?? 'CHOTHUHANG',
             'from_name' => 'CRS Cyber-Sport Store',
-            'from_phone' => '0988889999',
-            'from_address' => 'Số 1 Đại Cồ Việt, Bách Khoa, Hai Bà Trưng, Hà Nội',
+            'from_phone' => '0345155356',
+            'from_address' => '41A Phú Diễn, Phường Phú Diễn, Quận Bắc Từ Liêm, Hà Nội',
             'from_district_id' => $this->fromDistrictId,
+            'return_phone' => '0345155356',
+            'return_address' => '41A Phú Diễn, Phường Phú Diễn, Quận Bắc Từ Liêm, Hà Nội',
+            'return_district_id' => $this->fromDistrictId,
             'to_name' => $order->shipping_name ?: 'Khách hàng',
             'to_phone' => $order->phone ?: $order->shipping_phone ?: '0901234567',
-            'to_address' => $order->shipping_address ?: 'Hà Nội',
-            'to_district_id' => (int) ($customData['to_district_id'] ?? 1442),
-            'to_ward_code' => (string) ($customData['to_ward_code'] ?? '20101'),
+            'to_address' => $order->shipping_address ?: '123 Lê Lợi, Phường Tân Định, Quận 1, TP Hồ Chí Minh',
+            'to_district_id' => $toDistrictId,
+            'to_ward_code' => $toWardCode,
             'cod_amount' => ($order->payment_method === 'cod') ? (int) $order->total_amount : 0,
             'content' => 'Đơn hàng thể thao #'.$order->order_number,
-            'weight' => 500,
-            'length' => 25,
-            'width' => 20,
-            'height' => 10,
+            'weight' => (int) ($customData['weight'] ?? 500),
+            'length' => (int) ($customData['length'] ?? 20),
+            'width' => (int) ($customData['width'] ?? 15),
+            'height' => (int) ($customData['height'] ?? 10),
             'service_type_id' => 2,
             'items' => $items,
         ];
 
         $response = Http::withHeaders([
-            'token' => $this->token,
-            'shop_id' => $this->shopId,
+            'Token' => (string) config('services.ghn.token', env('GHN_TOKEN', $this->token)),
+            'token' => (string) config('services.ghn.token', env('GHN_TOKEN', $this->token)),
+            'ShopId' => $shopId,
+            'shop_id' => $shopId,
             'Content-Type' => 'application/json',
         ])->post("{$this->baseUrl}/v2/shipping-order/create", $payload);
 

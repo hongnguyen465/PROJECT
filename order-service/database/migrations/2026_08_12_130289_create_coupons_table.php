@@ -11,6 +11,10 @@ return new class extends Migration
         Schema::create('coupons', function (Blueprint $table) {
             $table->id();
 
+            // Gộp thêm từ file bổ sung
+            $table->string('title', 255)->nullable();
+            $table->text('description')->nullable();
+
             $table->string('code', 50)->unique();
             $table->string('type', 20); // fixed / percent
             $table->decimal('value', 12, 2);
@@ -23,10 +27,11 @@ return new class extends Migration
             $table->integer('limit_per_user')->default(1);
 
             $table->boolean('is_active')->default(true)->index();
-
             $table->timestamp('starts_at')->nullable();
             $table->timestamp('expires_at')->nullable();
 
+            // Thay is_deleted bằng chuẩn Laravel
+            $table->softDeletes(); 
             $table->timestamps();
 
             $table->index(['starts_at', 'expires_at']);

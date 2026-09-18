@@ -18,8 +18,10 @@ class MomoService
         $orderInfo = 'Thanh toan don hang #' . ($order->order_code ?? $order->order_number ?? $order->id);
         $amount = (string) ((int) ($order->total_amount ?? $order->total_price ?? 0));
         $orderId = $order->id . '_' . $transaction->id . '_' . time();
-        $redirectUrl = config('services.momo.redirect_url') ?: route('user.payment.momo.callback');
-        $ipnUrl = config('services.momo.ipn_url') ?: route('payment.momo.ipn');
+        $redirectUrl = config('services.momo.redirect_url')
+            ?: rtrim((string) config('app.url', 'http://localhost:8003'), '/') . '/payment/momo/callback';
+        $ipnUrl = config('services.momo.ipn_url')
+            ?: rtrim((string) config('app.url', 'http://localhost:8003'), '/') . '/payment/momo/ipn';
         $extraData = (string) $order->id;
         $requestId = (string) time();
         $requestType = config('services.momo.request_type', env('MOMO_REQUEST_TYPE', 'payWithATM'));
@@ -37,18 +39,18 @@ class MomoService
 
         $data = [
             'partnerCode' => $partnerCode,
-            'partnerName' => 'Fruit Shop',
-            'storeId' => 'MomoStore',
-            'requestId' => $requestId,
-            'amount' => $amount,
-            'orderId' => $orderId,
-            'orderInfo' => $orderInfo,
+            'partnerName' => config('services.momo.partner_name', env('APP_NAME', 'Striker Sport')),
+            'storeId'     => config('services.momo.store_id', 'StrikerStore'),
+            'requestId'   => $requestId,
+            'amount'      => $amount,
+            'orderId'     => $orderId,
+            'orderInfo'   => $orderInfo,
             'redirectUrl' => $redirectUrl,
-            'ipnUrl' => $ipnUrl,
-            'lang' => 'vi',
-            'extraData' => $extraData,
+            'ipnUrl'      => $ipnUrl,
+            'lang'        => 'vi',
+            'extraData'   => $extraData,
             'requestType' => $requestType,
-            'signature' => hash_hmac('sha256', $rawHash, $secretKey),
+            'signature'   => hash_hmac('sha256', $rawHash, $secretKey),
         ];
 
         $transaction->update([

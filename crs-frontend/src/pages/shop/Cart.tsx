@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
@@ -14,7 +14,8 @@ import { toast } from 'sonner'
 import { useApp } from '../../context/AppContext'
 import { CouponModal } from '../../components/CouponModal'
 import { ProductCard } from '../../components/ProductCard'
-import { products } from '../../data'
+import { fetchProducts } from '../../services/catalog'
+import type { Product } from '../../types'
 
 export function Cart() {
   const {
@@ -36,7 +37,16 @@ export function Cart() {
 
   const [couponModalOpen, setCouponModalOpen] = useState(false)
   const [couponInput, setCouponInput] = useState('')
+  const [recommendations, setRecommendations] = useState<Product[]>([])
   const navigate = useNavigate()
+
+  useEffect(() => {
+    fetchProducts({ per_page: 10 }).then((prods) => {
+      if (Array.isArray(prods)) {
+        setRecommendations(prods.filter((p) => p.isActive !== false && p.status !== 'inactive'))
+      }
+    }).catch(() => {})
+  }, [])
 
   const allSelected = cart.length > 0 && cart.every((item) => item.selected !== false)
   const selectedItemsCount = cart.filter((item) => item.selected !== false).length
@@ -66,7 +76,7 @@ export function Cart() {
     }
   }
 
-  const upsellProducts = products.filter((p) => !cart.some((c) => c.id === p.id)).slice(0, 4)
+  const upsellProducts = recommendations.filter((p) => !cart.some((c) => c.id === p.id)).slice(0, 4)
 
   return (
     <section className="min-h-screen bg-[#0B0E17] px-5 py-12 text-white lg:px-8">

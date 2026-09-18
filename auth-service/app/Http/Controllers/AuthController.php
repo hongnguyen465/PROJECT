@@ -300,4 +300,107 @@ class AuthController extends Controller
             'errors' => null,
         ], $status);
     }
+
+    /**
+     * Admin: List users / customers with addresses and search.
+     *
+     * @group Admin User Management
+     */
+    public function adminUsers(Request $request): JsonResponse
+    {
+        $search = trim((string) $request->query('search', ''));
+        $role = $request->query('role');
+        $status = $request->query('status'); // 'active' or 'blocked'
+
+        $query = User::with('addresses');
+
+        if ($search !== '') {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%")
+                  ->orWhere('phone_number', 'like', "%{$search}%");
+            });
+        }
+
+        if ($role) {
+            $query->where('role', $role);
+        }
+
+        if ($status === 'active') {
+            $query->where('is_active', true);
+        } elseif ($status === 'blocked') {
+            $query->where('is_active', false);
+        }
+
+        $users = $query->latest()->get()->map(function (User $user) {
+            $defaultAddress = $user->addresses->firstWhere('is_default', true) ?? $user->addresses->first();
+            $fullAddress = '';
+            if ($defaultAddress) {
+                $parts = array_filter([
+                    $defaultAddress->street_address,
+                    $defaultAddress->ward,
+                    $defaultAddress->district,
+                    $defaultAddress->province,
+                ]);
+                $fullAddress = implode(', ', $parts);
+            }
+
+            return [
+                'id' => $user->id,
+                'name' => $user->name,
+                'email' => $user->email,
+                'phone' => $user->phone_number ?? '',
+                'phone_number' => $user->phone_number,
+                'role' => $user->role,
+                'avatar' => $user->avatar,
+                'is_active' => (bool) $user->is_active,
+                'status' => $user->is_active ? 'active' : 'blocked',
+                'address' => $fullAddress,
+                'joinDate' => $user->created_at ? $user->created_at->format('d/m/Y') : '',
+                'created_at' => $user->created_at ? $user->created_at->toISOString() : null,
+                'addresses' => $user->addresses,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Lấy danh sách người dùng thành công.',
+            'data' => $users,
+            'errors' => null,
+        ]);
+    }
+
+    /**
+     * Admin: Toggle user active/blocked status.
+     *
+     * @group Admin User Management
+     */
+    public function adminToggleStatus(Request $request, int|string $id): JsonResponse
+    {
+        $user = User::find($id);
+
+        if (!$user) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy người dùng.',
+                'data' => null,
+                'errors' => ['user' => ['Tài khoản không tồn tại.']],
+            ], 404);
+        }
+
+        $user->is_active = !$user->is_active;
+        $user->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => $user->is_active ? 'Đã mở khóa tài khoản.' : 'Đã tạm khóa tài khoản.',
+            'data' => [
+                'id' => $user->id,
+                'name' => $user->name,
+                'is_active' => (bool) $user->is_active,
+                'status' => $user->is_active ? 'active' : 'blocked',
+            ],
+            'errors' => null,
+        ]);
+    }
 }

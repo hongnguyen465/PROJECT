@@ -16,8 +16,7 @@ import {
 import { Link, useNavigate } from 'react-router-dom'
 import { useEffect, useState, useMemo, useRef } from 'react'
 import { useApp } from '../context/AppContext'
-import { INITIAL_CATEGORIES, INITIAL_BRANDS } from '../data'
-import { fetchCategories } from '../services/catalog'
+import { fetchCategories, fetchBrands } from '../services/catalog'
 import type { CategoryItem, BrandItem } from '../types'
 
 const TRENDING_SEARCHES = ['Phantom GX', 'Predator Accuracy', 'Áo đấu Dri-FIT', 'Bóng Match Pro'];
@@ -30,18 +29,31 @@ export function Header() {
     const [activeDropdown, setActiveDropdown] = useState<string | null>(null)
     const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
     const navigate = useNavigate()
-    const [categoriesList, setCategoriesList] = useState<CategoryItem[]>(INITIAL_CATEGORIES)
-    const [brandsList] = useState<BrandItem[]>(INITIAL_BRANDS)
+    const [categoriesList, setCategoriesList] = useState<CategoryItem[]>([
+        { id: 1, name: 'Giày bóng đá', slug: 'giay-bong-da' },
+        { id: 2, name: 'Áo đấu', slug: 'ao-dau' },
+        { id: 3, name: 'Bóng thi đấu', slug: 'bong-thi-dau' },
+        { id: 4, name: 'Phụ kiện', slug: 'phu-kien' },
+    ])
+    const [brandsList, setBrandsList] = useState<BrandItem[]>([
+        { id: 1, name: 'Nike' },
+        { id: 2, name: 'Adidas' },
+        { id: 3, name: 'Puma' },
+        { id: 4, name: 'Mizuno' },
+    ])
 
     // Load from API on mount as progressive enhancement
     useEffect(() => {
         let active = true
-        fetchCategories()
-            .then((data) => {
-                if (!active || !Array.isArray(data) || data.length === 0) return
-                setCategoriesList(data)
-            })
-            .catch(console.error)
+        Promise.allSettled([fetchCategories(), fetchBrands()]).then(([cats, brs]) => {
+            if (!active) return
+            if (cats.status === 'fulfilled' && Array.isArray(cats.value) && cats.value.length > 0) {
+                setCategoriesList(cats.value)
+            }
+            if (brs.status === 'fulfilled' && Array.isArray(brs.value) && brs.value.length > 0) {
+                setBrandsList(brs.value)
+            }
+        }).catch(console.error)
         return () => {
             active = false
         }

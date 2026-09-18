@@ -9,7 +9,7 @@ return new class extends Migration {
         Schema::create('coupon_usages', function (Blueprint $table) {
             $table->id();
             $table->foreignId('coupon_id')->constrained('coupons')->onDelete('cascade');
-            $table->unsignedBigInteger('user_id'); // Tham chiếu Auth Service
+            $table->unsignedBigInteger('user_id')->index(); // Tham chiếu Auth Service
             $table->foreignId('order_id')->constrained('orders')->onDelete('cascade');
             $table->decimal('discount_amount', 12, 2);
             $table->timestamps();

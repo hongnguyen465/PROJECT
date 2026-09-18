@@ -13,7 +13,7 @@ import {
 import { toast } from 'sonner'
 import { ProductCard } from '../../components/ProductCard'
 import { HeroBanner } from '../../components/HeroBanner'
-import { products } from '../../data'
+import { fetchProducts } from '../../services/catalog'
 import { fetchCoupons } from '../../services/coupons'
 import { useApp } from '../../context/AppContext'
 import type { Product, Coupon } from '../../types'
@@ -22,6 +22,7 @@ export function Home() {
   const [activeTab, setActiveTab] = useState<'all' | 'hot' | 'sale'>('all')
   const [copiedCoupon, setCopiedCoupon] = useState<string | null>(null)
   const [apiCoupons, setApiCoupons] = useState<Coupon[]>([])
+  const [homeProducts, setHomeProducts] = useState<Product[]>([])
   const { saveCoupon, isCouponSaved } = useApp()
 
   useEffect(() => {
@@ -29,6 +30,14 @@ export function Home() {
       .then((res) => {
         const list = Array.isArray(res) ? res : res?.data ?? []
         setApiCoupons(list)
+      })
+      .catch(() => {})
+
+    fetchProducts({ per_page: 20 })
+      .then((prods) => {
+        if (Array.isArray(prods)) {
+          setHomeProducts(prods.filter((p) => p.isActive !== false && p.status !== 'inactive'))
+        }
       })
       .catch(() => {})
   }, [])
@@ -79,20 +88,6 @@ export function Home() {
       return false
     }
   }
-
-  // Dynamically load products for Home grid
-  const homeProducts: Product[] = useMemo(() => {
-    const stored = localStorage.getItem('crs_admin_products')
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored) as Product[]
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.filter((p) => p.isActive !== false && p.status !== 'inactive')
-        }
-      } catch {}
-    }
-    return products
-  }, [])
 
   const filteredProducts = homeProducts.filter((p) => {
     if (activeTab === 'hot') return p.tag === 'HOT' || p.tag === 'BEST SELLER'

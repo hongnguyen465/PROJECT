@@ -360,20 +360,30 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return
     }
 
-    const maxStock = typeof product.stock === 'number' ? product.stock : 999
-    if (maxStock <= 0) {
-      toast.error(`Sản phẩm "${product.name}" hiện đã hết hàng trong kho!`)
-      return
-    }
-
     const chosenSize = options.size ?? product.sizes?.[0] ?? 'FreeSize'
     const chosenColor = options.color ?? product.colors?.[0] ?? 'Mặc định'
     const cartItemId = `${product.id}_${chosenSize}_${chosenColor}`
 
+    // Calculate max available stock for this specific variant
+    let maxStock = typeof product.stock === 'number' ? product.stock : 999
+    if (product.variants && product.variants.length > 0) {
+      const matchingVariant = product.variants.find(
+        (v) =>
+          String(v.attributes?.size ?? '').trim() === String(chosenSize).trim() &&
+          String(v.attributes?.color ?? '').trim() === String(chosenColor).trim()
+      )
+      maxStock = matchingVariant ? matchingVariant.stock : 0
+    }
+
+    if (maxStock <= 0) {
+      toast.error(`Biến thể (Size ${chosenSize} · ${chosenColor}) hiện đã hết hàng trong kho!`)
+      return
+    }
+
     const existing = cart.find((item) => item.cartItemId === cartItemId)
     const existingQty = existing ? existing.quantity : 0
     if (existingQty + quantity > maxStock) {
-      toast.warning(`Kho chỉ còn ${maxStock} sản phẩm "${product.name}".`, {
+      toast.warning(`Kho chỉ còn ${maxStock} sản phẩm cho phân loại (Size ${chosenSize} · ${chosenColor}).`, {
         description: `Bạn đã có ${existingQty} sản phẩm trong giỏ hàng.`,
       })
       return
@@ -431,11 +441,20 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
     const targetItem = cart.find((i) => i.cartItemId === cartItemId)
     if (targetItem) {
-      const maxStock = typeof targetItem.stock === 'number' ? targetItem.stock : 999
+      let maxStock = typeof targetItem.stock === 'number' ? targetItem.stock : 999
+      if (targetItem.variants && targetItem.variants.length > 0) {
+        const v = targetItem.variants.find(
+          (variant) =>
+            String(variant.attributes?.size ?? '').trim() === String(targetItem.selectedSize ?? '').trim() &&
+            String(variant.attributes?.color ?? '').trim() === String(targetItem.selectedColor ?? '').trim()
+        )
+        if (v) maxStock = v.stock
+      }
+
       if (quantity > maxStock) {
-        toast.warning(`Kho chỉ còn tối đa ${maxStock} sản phẩm "${targetItem.name}".`)
+        toast.warning(`Kho chỉ còn tối đa ${maxStock} sản phẩm cho phân loại (Size ${targetItem.selectedSize} · ${targetItem.selectedColor}).`)
         setCart((current) =>
-          current.map((i) => i.cartItemId === cartItemId ? { ...i, quantity: maxStock } : i)
+          current.map((i) => i.cartItemId === cartItemId ? { ...i, quantity: Math.max(1, maxStock) } : i)
         )
         return
       }
@@ -468,20 +487,38 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCart((current) => {
       const source = current.find((item) => item.cartItemId === cartItemId)
       if (!source) return current
+
+      let variantStock = typeof source.stock === 'number' ? source.stock : 999
+      if (source.variants && source.variants.length > 0) {
+        const matching = source.variants.find(
+          (v) =>
+            String(v.attributes?.size ?? '').trim() === String(size).trim() &&
+            String(v.attributes?.color ?? '').trim() === String(color).trim()
+        )
+        variantStock = matching ? matching.stock : 0
+      }
+
+      if (variantStock <= 0) {
+        toast.error(`Biến thể (Size ${size} · ${color}) hiện đã hết hàng trong kho!`)
+        return current
+      }
+
       const nextId = `${source.id}_${size}_${color}`
       const duplicate = current.find((item) => item.cartItemId === nextId && item.cartItemId !== cartItemId)
       if (duplicate) {
+        const newQty = Math.min(variantStock, duplicate.quantity + source.quantity)
         return current
           .filter((item) => item.cartItemId !== cartItemId)
           .map((item) =>
             item.cartItemId === nextId
-              ? { ...item, quantity: item.quantity + source.quantity }
+              ? { ...item, quantity: newQty, selectedSize: size, selectedColor: color }
               : item
           )
       }
+      const adjustedQty = Math.min(variantStock, source.quantity)
       return current.map((item) =>
         item.cartItemId === cartItemId
-          ? { ...item, cartItemId: nextId, selectedSize: size, selectedColor: color }
+          ? { ...item, cartItemId: nextId, selectedSize: size, selectedColor: color, quantity: adjustedQty }
           : item
       )
     })
@@ -566,6 +603,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
           : o
       )
     )
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('order-status-changed'))
+    }
   }
 
   const cancelOrder = async (orderId: string) => {

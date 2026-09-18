@@ -12,6 +12,21 @@ interface CouponModalProps {
   onSelectCoupon?: (coupon: Coupon) => void
 }
 
+const normalizeCoupon = (raw: any): Coupon => ({
+  id: String(raw.id ?? raw.code),
+  code: String(raw.code ?? ''),
+  title: String(raw.title ?? raw.code ?? ''),
+  description: String(raw.description ?? ''),
+  discountType: raw.discountType ?? (raw.type === 'freeship' ? 'freeship' : raw.type === 'percent' ? 'percent' : 'fixed'),
+  discountValue: Number(raw.discountValue ?? raw.value ?? 0),
+  minOrderValue: Number(raw.minOrderValue ?? raw.min_order_amount ?? 0),
+  maxDiscount: raw.maxDiscount != null ? Number(raw.maxDiscount) : raw.max_discount_amount != null ? Number(raw.max_discount_amount) : undefined,
+  totalUsageLimit: Number(raw.totalUsageLimit ?? raw.usage_limit ?? 100),
+  usageCount: Number(raw.usageCount ?? raw.used_count ?? 0),
+  expiresAt: String(raw.expiresAt ?? raw.expires_at ?? ''),
+  isActive: Boolean(raw.isActive ?? raw.is_active ?? true),
+})
+
 export function CouponModal({ isOpen, onClose, onSelectCoupon }: CouponModalProps) {
   const { cartSubtotal, appliedCoupon, applyCoupon, user, orders } = useApp()
   const [manualCode, setManualCode] = useState('')
@@ -23,7 +38,7 @@ export function CouponModal({ isOpen, onClose, onSelectCoupon }: CouponModalProp
       fetchCoupons()
         .then((res) => {
           const list = Array.isArray(res) ? res : res?.data ?? []
-          setApiCoupons(list)
+          setApiCoupons(list.map(normalizeCoupon))
         })
         .catch(() => {
           setApiCoupons([])
@@ -31,19 +46,39 @@ export function CouponModal({ isOpen, onClose, onSelectCoupon }: CouponModalProp
     }
   }, [isOpen])
 
-  // Load dynamic active coupons from localStorage or API
+  // Load dynamic active coupons from API or fallback to localStorage
   const availableCoupons: Coupon[] = useMemo(() => {
+    if (apiCoupons.length > 0) {
+      return apiCoupons.filter((c) => c.isActive !== false)
+    }
     const stored = localStorage.getItem('crs_admin_vouchers')
     if (stored) {
       try {
-        const parsed: Coupon[] = JSON.parse(stored)
+        const parsed: any[] = JSON.parse(stored)
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed.filter((c) => c.isActive !== false)
+          return parsed.map(normalizeCoupon).filter((c) => c.isActive !== false)
         }
       } catch {}
     }
-    return apiCoupons.filter((c) => c.isActive !== false)
+    return []
   }, [apiCoupons])
+
+  // Format expiry display
+  const formatExpiryDisplay = (expiresAt?: string) => {
+    if (!expiresAt) return ''
+    try {
+      if (expiresAt.includes('T') || (expiresAt.includes('-') && expiresAt.split('-')[0].length === 4)) {
+        const d = new Date(expiresAt)
+        if (!isNaN(d.getTime())) {
+          return d.toLocaleDateString('vi-VN')
+        }
+      }
+      if (expiresAt.includes('/')) return expiresAt
+    } catch {
+      return expiresAt
+    }
+    return expiresAt
+  }
 
   // Helper check voucher expiration
   const isVoucherExpired = (expiresAt?: string) => {
@@ -53,12 +88,10 @@ export function CouponModal({ isOpen, onClose, onSelectCoupon }: CouponModalProp
         const [d, m, y] = expiresAt.split('/')
         const expDate = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10), 23, 59, 59)
         return expDate.getTime() < Date.now()
-      } else if (expiresAt.includes('-')) {
-        const [y, m, d] = expiresAt.split('-')
-        const expDate = new Date(parseInt(y, 10), parseInt(m, 10) - 1, parseInt(d, 10), 23, 59, 59)
-        return expDate.getTime() < Date.now()
       }
-      return new Date(expiresAt).getTime() < Date.now()
+      const expDate = new Date(expiresAt)
+      if (isNaN(expDate.getTime())) return false
+      return expDate.getTime() < Date.now()
     } catch {
       return false
     }
@@ -235,12 +268,12 @@ export function CouponModal({ isOpen, onClose, onSelectCoupon }: CouponModalProp
                             ? 'Đã hết lượt dùng'
                             : isUsedByUser
                             ? 'Bạn đã sử dụng mã này'
-                            : `HSD: ${coupon.expiresAt}`}
+                            : `HSD: ${formatExpiryDisplay(coupon.expiresAt)}`}
                         </span>
 
                         {isAvailable && !isEligible && cartSubtotal > 0 && (
                           <span className="font-semibold text-amber-300">
-                            (Mua thêm {missingAmount.toLocaleString('vi-VN')}đ để dùng)
+                            (Mua thêm {(Number(missingAmount ?? 0)).toLocaleString('vi-VN')}đ để dùng)
                           </span>
                         )}
                         {isEligible && cartSubtotal > 0 && (
@@ -288,7 +321,7 @@ export function CouponModal({ isOpen, onClose, onSelectCoupon }: CouponModalProp
             <div className="flex items-center justify-between border-t border-white/10 bg-slate-950/80 px-6 py-4 text-xs text-slate-400">
               <span>
                 Tạm tính giỏ hàng:{' '}
-                <b className="text-white">{cartSubtotal.toLocaleString('vi-VN')}đ</b>
+                <b className="text-white">{(Number(cartSubtotal ?? 0)).toLocaleString('vi-VN')}đ</b>
               </span>
               <button
                 type="button"

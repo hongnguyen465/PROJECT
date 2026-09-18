@@ -7,14 +7,18 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-#[Fillable(['category_id', 'name', 'slug', 'sku', 'description', 'price', 'old_price', 'stock', 'brand', 'image_url', 'images', 'colors', 'sizes', 'is_active', 'is_deleted'])]
+#[Fillable(['category_id', 'brand_id', 'name', 'slug', 'sku', 'description', 'price', 'old_price', 'stock', 'brand', 'image_url', 'images', 'colors', 'sizes', 'is_active'])]
 class Product extends Model
 {
     use SoftDeletes;
 
+    protected $appends = ['is_deleted'];
+
     protected function casts(): array
     {
         return [
+            'category_id' => 'integer',
+            'brand_id' => 'integer',
             'price' => 'decimal:2',
             'old_price' => 'decimal:2',
             'stock' => 'integer',
@@ -22,8 +26,12 @@ class Product extends Model
             'colors' => 'array',
             'sizes' => 'array',
             'is_active' => 'boolean',
-            'is_deleted' => 'boolean',
         ];
+    }
+
+    public function getIsDeletedAttribute(): bool
+    {
+        return $this->trashed();
     }
 
     public function category(): BelongsTo

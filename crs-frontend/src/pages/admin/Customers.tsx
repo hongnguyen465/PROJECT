@@ -7,67 +7,95 @@ import {
   MapPin, 
   UserCheck, 
   UserX, 
-  X,
-  ShoppingBag,
-  Clock,
-  CheckCircle2,
-  Truck,
-  XCircle,
+  X, 
+  ShoppingBag, 
+  Clock, 
+  CheckCircle2, 
+  Truck, 
+  XCircle, 
   Package
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { INITIAL_ADMIN_CUSTOMERS, INITIAL_ADMIN_ORDERS } from '../../data/adminMockData';
+import { fetchAdminUsers, toggleUserStatus, mapBackendCustomer } from '../../services/auth';
+import { fetchAdminOrders, mapBackendOrder } from '../../services/orders';
 import type { Customer, Order } from '../../types';
 
 export const Customers: React.FC = () => {
-  const [customersList, setCustomersList] = useState<Customer[]>(() => {
-    const stored = localStorage.getItem('crs_admin_customers');
-    if (!stored) return INITIAL_ADMIN_CUSTOMERS;
-    try {
-      return JSON.parse(stored) as Customer[];
-    } catch {
-      return INITIAL_ADMIN_CUSTOMERS;
-    }
-  });
-
-  // Orders list for referencing customer orders history
-  const [ordersList] = useState<Order[]>(() => {
-    const stored = localStorage.getItem('crs_admin_orders');
-    if (stored) {
-      try {
-        return JSON.parse(stored) as Order[];
-      } catch {}
-    }
-    return INITIAL_ADMIN_ORDERS;
-  });
+  const [customersList, setCustomersList] = useState<Customer[]>([]);
+  const [ordersList, setOrdersList] = useState<Order[]>([]);
+  const [, setIsLoading] = useState(true);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
 
-  // Persist customers to localStorage
+  // Load real customers and orders from API
   useEffect(() => {
-    localStorage.setItem('crs_admin_customers', JSON.stringify(customersList));
-  }, [customersList]);
+    let isMounted = true;
 
-  // Toggle Account Status (Active / Blocked)
-  const handleToggleStatus = (id: string | number) => {
-    setCustomersList((prev) =>
-      prev.map((c) => {
-        if (String(c.id) === String(id)) {
-          const nextStatus = c.status === 'active' ? 'blocked' : 'active';
-          toast.info(
-            `${nextStatus === 'active' ? 'Đã mở khóa' : 'Đã tạm khóa'} tài khoản "${c.name}"`
-          );
-          const updated = { ...c, status: nextStatus as 'active' | 'blocked' };
-          if (selectedCustomer && selectedCustomer.id === id) {
-            setSelectedCustomer(updated);
+    async function loadData() {
+      setIsLoading(true);
+      try {
+        const [ordersRes, usersRes] = await Promise.allSettled([
+          fetchAdminOrders({ per_page: 500 }),
+          fetchAdminUsers(),
+        ]);
+
+        let loadedOrders: Order[] = [];
+        if (ordersRes.status === 'fulfilled') {
+          const rawOrders = ordersRes.value?.data ?? ordersRes.value ?? [];
+          if (Array.isArray(rawOrders)) {
+            loadedOrders = rawOrders.map(mapBackendOrder);
+            if (isMounted) setOrdersList(loadedOrders);
           }
-          return updated;
         }
-        return c;
-      })
-    );
+
+        if (usersRes.status === 'fulfilled' && isMounted) {
+          const rawUsers = usersRes.value ?? [];
+          if (Array.isArray(rawUsers)) {
+            const mappedCustomers = rawUsers.map((u: any) => mapBackendCustomer(u, loadedOrders));
+            setCustomersList(mappedCustomers);
+          }
+        }
+      } catch (err) {
+        console.error('Lỗi khi tải dữ liệu khách hàng:', err);
+        toast.error('Không thể tải danh sách khách hàng từ hệ thống.');
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    }
+
+    loadData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Toggle Account Status (Active / Blocked) via API
+  const handleToggleStatus = async (id: string | number) => {
+    try {
+      const res = await toggleUserStatus(id);
+      const nextStatus = res.status || 'active';
+      const targetName = customersList.find((c) => String(c.id) === String(id))?.name || 'người dùng';
+      toast.info(
+        `${nextStatus === 'active' ? 'Đã mở khóa' : 'Đã tạm khóa'} tài khoản "${targetName}"`
+      );
+      setCustomersList((prev) =>
+        prev.map((c) => {
+          if (String(c.id) === String(id)) {
+            const updated = { ...c, status: nextStatus as 'active' | 'blocked' };
+            if (selectedCustomer && String(selectedCustomer.id) === String(id)) {
+              setSelectedCustomer(updated);
+            }
+            return updated;
+          }
+          return c;
+        })
+      );
+    } catch (err: any) {
+      toast.error(err?.response?.data?.message || 'Không thể thay đổi trạng thái tài khoản.');
+    }
   };
 
   // Helper: Get initial character for Avatar

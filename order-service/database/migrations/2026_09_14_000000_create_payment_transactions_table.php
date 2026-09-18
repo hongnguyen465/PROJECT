@@ -13,8 +13,8 @@ return new class extends Migration {
             $table->string('gateway');
             $table->string('gateway_order_id')->nullable()->index();
             $table->string('transaction_id')->nullable()->index();
-            $table->decimal('amount', 15, 2);
-            $table->string('status')->default('pending');
+            $table->decimal('amount', 12, 2);
+            $table->string('status')->default('pending')->index();
             $table->integer('result_code')->nullable();
             $table->string('message')->nullable();
             $table->json('request_payload')->nullable();

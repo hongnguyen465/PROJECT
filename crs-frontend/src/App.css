@@ -623,28 +623,6 @@ em {
     letter-spacing: .1em
 }
 
-.quick-view {
-    position: absolute;
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 10px 12px;
-    opacity: 0;
-    color: var(--ink);
-    background: white;
-    font-size: 11px;
-    transform: translateY(8px);
-    transition: .25s
-}
-
-.product-card:hover .quick-view {
-    opacity: 1;
-    transform: none
-}
-
 .product-meta {
     display: flex;
     justify-content: space-between;

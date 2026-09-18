@@ -47,7 +47,7 @@ class ReviewController extends Controller
     public function store(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'order_id'    => ['required', 'string', 'max:100'],
+            'order_id'    => ['sometimes', 'nullable', 'string', 'max:100'],
             'product_id'  => ['required', 'integer', 'min:1'],
             'user_id'     => ['required', 'integer', 'min:1'],
             'user_name'   => ['required', 'string', 'max:100'],
@@ -55,6 +55,10 @@ class ReviewController extends Controller
             'rating'      => ['required', 'integer', 'min:1', 'max:5'],
             'comment'     => ['required', 'string', 'max:2000'],
         ]);
+
+        if (empty($validated['order_id'])) {
+            $validated['order_id'] = 'DIRECT-' . \Illuminate\Support\Str::random(8);
+        }
 
         try {
             $review = Review::create($validated);

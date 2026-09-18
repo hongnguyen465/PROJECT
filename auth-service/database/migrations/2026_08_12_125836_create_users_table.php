@@ -16,7 +16,8 @@ return new class extends Migration
             $table->string('password');
             $table->string('phone_number', 20)->nullable()->unique();
             $table->string('role', 20)->default('user')->index();
-            $table->boolean('is_active')->default(true);
+            $table->string('avatar')->nullable();
+            $table->boolean('is_active')->default(true)->index();
 
             $table->rememberToken();
             $table->timestamps();

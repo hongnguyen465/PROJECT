@@ -13,7 +13,6 @@ use Carbon\Carbon;
 use Exception;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -43,7 +42,8 @@ class OrderController extends Controller
             'to_ward_code' => ['sometimes', 'nullable'],
             'shipping_fee' => ['sometimes', 'numeric', 'min:0'],
             'discount_amount' => ['sometimes', 'numeric', 'min:0'],
-            'payment_method' => ['sometimes', 'string', 'in:cod,momo,bank_transfer'],
+            'payment_method' => ['sometimes', 'nullable', 'string', 'max:50'],
+            'ghn_code' => ['sometimes', 'nullable', 'string', 'max:100'],
             'coupon_id' => ['sometimes', 'nullable', 'integer', 'exists:coupons,id'],
             'coupon_code' => ['sometimes', 'nullable', 'string'],
             'note' => ['sometimes', 'nullable', 'string'],
@@ -100,7 +100,7 @@ class OrderController extends Controller
 
                 // 1. Validate and Apply Coupon strictly if provided
                 if (!empty($validated['coupon_code']) || !empty($couponId)) {
-                    $couponQuery = Coupon::query()->where('is_deleted', false)->where('is_active', true)->lockForUpdate();
+                    $couponQuery = Coupon::query()->where('is_active', true)->lockForUpdate();
                     if (!empty($couponId)) {
                         $coupon = $couponQuery->where('id', $couponId)->first();
                     } else {
@@ -129,6 +129,11 @@ class OrderController extends Controller
                     // Calculate discount
                     if ($coupon->type === 'fixed') {
                         $discountAmount = min($subtotal, (float) $coupon->value);
+                    } elseif ($coupon->type === 'percent') {
+                        $rawDiscount = ($subtotal * (float) $coupon->value) / 100;
+                        $discountAmount = ($coupon->max_discount_amount && (float) $coupon->max_discount_amount > 0)
+                            ? min($rawDiscount, (float) $coupon->max_discount_amount)
+                            : $rawDiscount;
                     } elseif ($coupon->type === 'freeship') {
                         $freeshipDiscount = min($shippingFee, (float) ($coupon->value > 0 ? $coupon->value : $shippingFee));
                         $discountAmount = $freeshipDiscount;
@@ -159,7 +164,7 @@ class OrderController extends Controller
                             Log::warning('Catalog stock deduction warning: ' . $errMsg);
                         }
                     }
-                } catch (Exception $e) {
+                } catch (\Throwable $e) {
                     Log::warning('Cannot connect to Catalog Service to deduct stock: ' . $e->getMessage());
                 }
 
@@ -184,6 +189,7 @@ class OrderController extends Controller
                     'status' => 'pending',
                     'payment_status' => 'unpaid',
                     'payment_method' => $validated['payment_method'] ?? 'cod',
+                    'ghn_code' => $validated['ghn_code'] ?? null,
                     'note' => $validated['note'] ?? null,
                 ]);
 
@@ -192,17 +198,7 @@ class OrderController extends Controller
                     $pid = (int) $item['product_id'];
                     $name = $item['product_name'] ?? $item['name'] ?? null;
                     if (empty($name)) {
-                        $name = 'Product #' . $pid;
-
-                        try {
-                            $prodRes = Http::timeout(2)->get("{$catalogUrl}/api/products/{$pid}");
-                            if ($prodRes->successful()) {
-                                $pData = $prodRes->json();
-                                $name = $pData['data']['name'] ?? $pData['name'] ?? ('Product #' . $pid);
-                            }
-                        } catch (Exception) {
-                            $name = 'Product #' . $pid;
-                        }
+                        $name = 'Sản phẩm #' . $pid;
                     }
 
                     $price = (float) $item['price'];
@@ -251,10 +247,18 @@ class OrderController extends Controller
                 } elseif ($order->payment_method === 'cod') {
                     PaymentTransaction::create([
                         'order_id' => $order->id,
-                        'gateway' => 'cod',
-                        'amount' => $order->total_amount,
-                        'status' => 'pending',
-                        'message' => 'Thanh toán khi nhận hàng (COD)',
+                        'gateway'  => 'cod',
+                        'amount'   => $order->total_amount,
+                        'status'   => 'pending',
+                        'message'  => 'Thanh toán khi nhận hàng (COD)',
+                    ]);
+                } elseif ($order->payment_method === 'bank_transfer') {
+                    PaymentTransaction::create([
+                        'order_id' => $order->id,
+                        'gateway'  => 'bank_transfer',
+                        'amount'   => $order->total_amount,
+                        'status'   => 'pending',
+                        'message'  => 'Chờ xác nhận chuyển khoản ngân hàng',
                     ]);
                 }
 
@@ -271,7 +275,7 @@ class OrderController extends Controller
                 'pay_url' => $orderData['pay_url'],
                 'errors' => null,
             ], 201);
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             $code = $e->getCode();
             $statusCode = is_numeric($code) && (int) $code >= 400 && (int) $code < 600 ? (int) $code : 422;
 
@@ -285,182 +289,6 @@ class OrderController extends Controller
     }
 
     /**
-     * View payment checkout page.
-     */
-    public function paymentIndex(Request $request)
-    {
-        $cart = session('cart', []);
-        $subtotal = collect($cart)->sum(fn ($item) => ((float) ($item['price'] ?? 0)) * ((int) ($item['quantity'] ?? 1)));
-
-        return view('user.payment.index', [
-            'cart' => $cart,
-            'subtotal' => $subtotal,
-            'user' => Auth::user(),
-        ]);
-    }
-
-    /**
-     * Process order payment from web form.
-     *
-     * @group Order Management
-     */
-    public function processPayment(Request $request)
-    {
-        $request->validate([
-            'name' => 'required|string|max:100',
-            'phone' => ['required', 'regex:/^0(3|5|7|8|9)\d{8}$/'],
-            'address' => 'required|string|max:255',
-            'to_district_id' => 'required|integer',
-            'to_ward_code' => 'required|string',
-            'payment_method' => 'required|in:cod,momo',
-        ]);
-
-        $cart = session('cart', []);
-        if (empty($cart)) {
-            if ($request->wantsJson()) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Không thể thanh toán vì giỏ hàng trống.',
-                ], 422);
-            }
-            return redirect()->route('user.cart.index')->with('error', 'Không thể thanh toán vì giỏ hàng trống.');
-        }
-
-        // 1. Tính tổng tiền hàng
-        $subtotal = collect($cart)->sum(fn ($item) => ((float) ($item['price'] ?? 0)) * ((int) ($item['quantity'] ?? 1)));
-        $totalWeight = collect($cart)->sum(fn ($item) => 200 * ((int) ($item['quantity'] ?? 1)));
-
-        // 2. Tính lại phí ship chuẩn xác từ GHN
-        $shippingFee = 30000;
-        try {
-            $feeResponse = $this->ghnService->calculateFee(
-                (int) $request->to_district_id,
-                (string) $request->to_ward_code,
-                max(100, $totalWeight)
-            );
-            if (!empty($feeResponse['total'])) {
-                $shippingFee = (float) $feeResponse['total'];
-            }
-        } catch (\Exception $e) {
-            Log::warning('GHN calculate fee error in processPayment: ' . $e->getMessage());
-        }
-
-        $finalTotal = $subtotal + $shippingFee;
-
-        // 3. Tạo đơn hàng và chi tiết đơn hàng trong Database
-        $order = DB::transaction(function () use ($request, $shippingFee, $subtotal, $finalTotal, $cart) {
-            $orderNumber = 'ORD-' . now()->format('Ymd') . '-' . Str::upper(Str::random(6));
-            $order = Order::create([
-                'user_id' => Auth::id() ?? 1,
-                'order_number' => $orderNumber,
-                'order_code' => $orderNumber,
-                'name' => $request->name,
-                'shipping_name' => $request->name,
-                'address' => $request->address,
-                'shipping_address' => $request->address,
-                'phone' => $request->phone,
-                'shipping_phone' => $request->phone,
-                'subtotal' => $subtotal,
-                'shipping_fee' => $shippingFee,
-                'total_amount' => $finalTotal,
-                'status' => 'pending',
-                'order_status' => 'pending',
-                'payment_status' => 'unpaid',
-                'payment_method' => $request->payment_method,
-            ]);
-
-            foreach ($cart as $item) {
-                $pid = (int) ($item['id'] ?? $item['product_id'] ?? 1);
-                $pPrice = (float) ($item['price'] ?? 0);
-                $pQty = (int) ($item['quantity'] ?? 1);
-                $order->items()->create([
-                    'product_id' => $pid,
-                    'variant_id' => $pid,
-                    'product_name' => $item['name'] ?? ('Product #' . $pid),
-                    'variant_attributes' => [],
-                    'sku' => $item['sku'] ?? ('STR-' . $pid),
-                    'unit_price' => $pPrice,
-                    'quantity' => $pQty,
-                    'subtotal' => $pPrice * $pQty,
-                ]);
-            }
-
-            return $order;
-        });
-
-        // Xóa session giỏ hàng
-        session()->forget('cart');
-
-        // 4. Phân luồng thanh toán
-        if ($request->payment_method === 'momo') {
-            PaymentTransaction::create([
-                'order_id' => $order->id,
-                'gateway' => 'momo',
-                'amount' => $order->total_amount,
-                'status' => 'pending',
-            ]);
-
-            if ($request->wantsJson()) {
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Khởi tạo đơn hàng MoMo thành công.',
-                    'data' => $order,
-                    'redirect_url' => route('user.orders.momo.start', $order),
-                ]);
-            }
-
-            return redirect()->route('user.orders.momo.start', $order);
-        }
-
-        // Nhánh COD: Tạo vận đơn GHN
-        PaymentTransaction::create([
-            'order_id' => $order->id,
-            'gateway' => 'cod',
-            'amount' => $order->total_amount,
-            'status' => 'pending',
-            'message' => 'Thanh toán khi nhận hàng',
-        ]);
-
-        try {
-            $order->load('items');
-            $ghnOrderResponse = $this->ghnService->createShippingOrder($order);
-            if (!empty($ghnOrderResponse['order_code'])) {
-                $order->update([
-                    'status' => 'cod_ordered',
-                    'order_status' => 'shipping',
-                    'ghn_code' => $ghnOrderResponse['order_code'],
-                ]);
-
-                if ($request->wantsJson()) {
-                    return response()->json([
-                        'success' => true,
-                        'message' => 'Đặt hàng thành công! Mã vận đơn GHN: ' . $ghnOrderResponse['order_code'],
-                        'data' => $order,
-                    ]);
-                }
-
-                return redirect()->route('user.orders.index')
-                    ->with('success', 'Đặt hàng thành công! Mã vận đơn GHN: ' . $ghnOrderResponse['order_code']);
-            }
-        } catch (\Exception $e) {
-            Log::error('GHN COD Order Failed: ' . $e->getMessage());
-        }
-
-        $order->update(['status' => 'cod_ordered']);
-
-        if ($request->wantsJson()) {
-            return response()->json([
-                'success' => true,
-                'message' => 'Đặt hàng thành công nhưng chưa thể tạo vận đơn GHN tự động.',
-                'data' => $order,
-            ]);
-        }
-
-        return redirect()->route('user.orders.index')
-            ->with('warning', 'Đặt hàng thành công nhưng chưa thể tạo vận đơn GHN tự động.');
-    }
-
-    /**
      * List orders (supports admin & user scoping).
      *
      * @group Order Management
@@ -471,7 +299,7 @@ class OrderController extends Controller
             'user_id' => ['sometimes', 'nullable', 'integer', 'min:1'],
             'status' => ['sometimes', 'nullable', 'string'],
             'search' => ['sometimes', 'nullable', 'string'],
-            'per_page' => ['sometimes', 'integer', 'min:1', 'max:100'],
+            'per_page' => ['sometimes', 'integer', 'min:1', 'max:1000'],
         ]);
 
         $orders = Order::with(['user', 'items', 'coupon', 'paymentTransactions'])
@@ -495,39 +323,35 @@ class OrderController extends Controller
                 });
             })
             ->latest()
-            ->paginate($validated['per_page'] ?? 15)
+            ->paginate($validated['per_page'] ?? 100)
             ->withQueryString();
 
         $pendingCount = Order::where(function ($q) {
-            $q->whereIn('order_status', ['pending', 'processing'])
-              ->orWhereIn('status', ['pending', 'processing']);
+            $q->where('order_status', 'pending')
+              ->orWhere(function ($sub) {
+                  $sub->whereNull('order_status')->where('status', 'pending');
+              });
         })->count();
 
-        $stats = [
-            'total' => Order::count(),
-            'pending' => $pendingCount,
-            'shipping' => Order::where('order_status', 'shipping')->orWhere('status', 'shipping')->count(),
-            'delivered' => Order::whereIn('order_status', ['delivered', 'paid'])->orWhereIn('status', ['delivered', 'paid'])->count(),
-            'cancelled' => Order::where('order_status', 'cancelled')->orWhere('status', 'cancelled')->count(),
-        ];
+        $stats = $this->getOrderStats();
 
         if (! $request->wantsJson() && ! $request->is('api/*')) {
             return view('user.orders.index', [
                 'orders' => $orders,
-                'stats' => $stats,
+                'stats'  => $stats,
             ]);
         }
 
         return response()->json([
-            'success' => true,
-            'message' => 'Lấy danh sách đơn hàng thành công.',
-            'data' => $orders->items(),
-            'stats' => $stats,
+            'success'    => true,
+            'message'    => 'Lấy danh sách đơn hàng thành công.',
+            'data'       => $orders->items(),
+            'stats'      => $stats,
             'pagination' => [
                 'current_page' => $orders->currentPage(),
-                'per_page' => $orders->perPage(),
-                'total' => $orders->total(),
-                'last_page' => $orders->lastPage(),
+                'per_page'     => $orders->perPage(),
+                'total'        => $orders->total(),
+                'last_page'    => $orders->lastPage(),
             ],
             'errors' => null,
         ]);
@@ -538,21 +362,46 @@ class OrderController extends Controller
      */
     public function stats(): JsonResponse
     {
-        $pendingCount = Order::where(function ($q) {
-            $q->whereIn('order_status', ['pending', 'processing'])
-              ->orWhereIn('status', ['pending', 'processing']);
-        })->count();
-
         return response()->json([
             'success' => true,
-            'data' => [
-                'total' => Order::count(),
-                'pending' => $pendingCount,
-                'shipping' => Order::where('order_status', 'shipping')->orWhere('status', 'shipping')->count(),
-                'delivered' => Order::whereIn('order_status', ['delivered', 'paid'])->orWhereIn('status', ['delivered', 'paid'])->count(),
-                'cancelled' => Order::where('order_status', 'cancelled')->orWhere('status', 'cancelled')->count(),
-            ],
+            'data'    => $this->getOrderStats(),
         ]);
+    }
+
+    /**
+     * Compute order counts by status.
+     * Extracted to avoid DRY violation between index() and stats().
+     * All orWhere conditions are wrapped in closures to prevent scope leaking.
+     */
+    private function getOrderStats(): array
+    {
+        return [
+            'total'     => Order::count(),
+            'pending'   => Order::where(function ($q) {
+                $q->where('order_status', 'pending')
+                  ->orWhere(function ($sub) {
+                      $sub->whereNull('order_status')->where('status', 'pending');
+                  });
+            })->count(),
+            'shipping'  => Order::where(function ($q) {
+                $q->where('order_status', 'shipping')
+                  ->orWhere(function ($sub) {
+                      $sub->whereNull('order_status')->where('status', 'shipping');
+                  });
+            })->count(),
+            'delivered' => Order::where(function ($q) {
+                $q->whereIn('order_status', ['delivered', 'paid'])
+                  ->orWhere(function ($sub) {
+                      $sub->whereNull('order_status')->whereIn('status', ['delivered', 'paid']);
+                  });
+            })->count(),
+            'cancelled' => Order::where(function ($q) {
+                $q->where('order_status', 'cancelled')
+                  ->orWhere(function ($sub) {
+                      $sub->whereNull('order_status')->where('status', 'cancelled');
+                  });
+            })->count(),
+        ];
     }
 
     /**
@@ -605,6 +454,30 @@ class OrderController extends Controller
     }
 
     /**
+     * Ship with GHN by order_code or id.
+     *
+     * @group Order Management
+     */
+    public function shipWithGHN(Request $request, string $order_code): JsonResponse
+    {
+        $order = Order::where('order_code', $order_code)
+            ->orWhere('order_number', $order_code)
+            ->orWhere('id', $order_code)
+            ->first();
+
+        if (! $order) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Không tìm thấy đơn hàng với mã: ' . $order_code,
+                'data' => null,
+                'errors' => ['order' => ['Đơn hàng không tồn tại.']],
+            ], 404);
+        }
+
+        return $this->createGhnShipping($request, $order);
+    }
+
+    /**
      * Create GHN shipping order and persist ghn_code.
      *
      * @group Order Management
@@ -612,12 +485,29 @@ class OrderController extends Controller
     public function createGhnShipping(Request $request, Order $order): JsonResponse
     {
         $validated = $request->validate([
-            'to_district_id' => ['sometimes', 'integer'],
-            'to_ward_code' => ['sometimes', 'string'],
+            'to_district_id' => ['sometimes', 'nullable', 'integer'],
+            'to_ward_code' => ['sometimes', 'nullable'],
+            'weight' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'length' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'width' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'height' => ['sometimes', 'nullable', 'integer', 'min:1'],
+            'required_note' => ['sometimes', 'nullable', 'string'],
+            'note' => ['sometimes', 'nullable', 'string'],
         ]);
 
+        $customData = [
+            'to_district_id' => !empty($validated['to_district_id']) ? (int) $validated['to_district_id'] : 1442,
+            'to_ward_code' => !empty($validated['to_ward_code']) ? (string) $validated['to_ward_code'] : '20110',
+            'weight' => !empty($validated['weight']) ? (int) $validated['weight'] : 500,
+            'length' => !empty($validated['length']) ? (int) $validated['length'] : 20,
+            'width' => !empty($validated['width']) ? (int) $validated['width'] : 15,
+            'height' => !empty($validated['height']) ? (int) $validated['height'] : 10,
+            'required_note' => !empty($validated['required_note']) ? (string) $validated['required_note'] : 'CHOTHUHANG',
+            'note' => $validated['note'] ?? $order->note,
+        ];
+
         try {
-            $ghnResponse = $this->ghnService->createShippingOrder($order, $validated);
+            $ghnResponse = $this->ghnService->createShippingOrder($order, $customData);
             $ghnOrderCode = $ghnResponse['order_code'] ?? null;
 
             if (! $ghnOrderCode) {
@@ -633,6 +523,7 @@ class OrderController extends Controller
             return response()->json([
                 'success' => true,
                 'message' => 'Đã tạo vận đơn GHN thành công: '.$ghnOrderCode,
+                'ghn_code' => $ghnOrderCode,
                 'data' => [
                     'order' => $order->fresh()->load('items'),
                     'ghn_code' => $ghnOrderCode,
@@ -640,10 +531,15 @@ class OrderController extends Controller
                 ],
                 'errors' => null,
             ]);
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             return response()->json([
                 'success' => false,
                 'message' => 'Tạo đơn GHN thất bại: '.$e->getMessage(),
+                'error' => [
+                    'code' => 'GHN_CREATE_ERROR',
+                    'message' => 'Tạo đơn GHN thất bại: '.$e->getMessage(),
+                    'details' => ['ghn' => [$e->getMessage()]],
+                ],
                 'data' => null,
                 'errors' => ['ghn' => [$e->getMessage()]],
             ], 422);

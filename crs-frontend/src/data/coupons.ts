@@ -22,9 +22,9 @@ export function calculateOrderTotals(subtotal: number, coupon: Coupon | null): O
   let freeShippingQualified = false
 
   if (coupon) {
-    if (subtotal < coupon.minOrderValue) {
+    if (subtotal < (coupon.minOrderValue ?? 0)) {
       isValid = false
-      errorReason = `Đơn hàng tối thiểu ${coupon.minOrderValue.toLocaleString('vi-VN')}đ để sử dụng mã ${coupon.code}`
+      errorReason = `Đơn hàng tối thiểu ${(Number(coupon.minOrderValue ?? 0)).toLocaleString('vi-VN')}đ để sử dụng mã ${coupon.code}`
     } else {
       if (coupon.discountType === 'fixed') {
         discountAmount = Math.min(subtotal, coupon.discountValue)

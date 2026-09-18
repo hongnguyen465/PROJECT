@@ -24,7 +24,9 @@ class PaymentTransaction extends Model
     protected function casts(): array
     {
         return [
+            'order_id' => 'integer',
             'amount' => 'decimal:2',
+            'result_code' => 'integer',
             'request_payload' => 'array',
             'response_payload' => 'array',
             'paid_at' => 'datetime',

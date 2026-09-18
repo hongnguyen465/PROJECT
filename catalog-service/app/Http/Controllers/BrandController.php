@@ -19,7 +19,6 @@ class BrandController extends Controller
     {
         $brands = Brand::latest()->get()->map(function (Brand $brand) {
             $productCount = Product::where('brand', $brand->name)
-                ->where('is_deleted', false)
                 ->count();
             $brandArray = $brand->toArray();
             $brandArray['products_count'] = $productCount;
@@ -69,7 +68,6 @@ class BrandController extends Controller
     public function show(Brand $brand): JsonResponse
     {
         $products = Product::where('brand', $brand->name)
-            ->where('is_deleted', false)
             ->get();
 
         $data = $brand->toArray();

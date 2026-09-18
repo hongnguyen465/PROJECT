@@ -4,27 +4,26 @@ use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
-// 8. create_carts_and_cart_items_table.php
-
 return new class extends Migration {
     public function up(): void
     {
         Schema::create('carts', function (Blueprint $table) {
             $table->id();
             $table->unsignedBigInteger('user_id')->unique();
-
             $table->timestamps();
         });
 
         Schema::create('cart_items', function (Blueprint $table) {
             $table->id();
-
             $table->foreignId('cart_id')->constrained('carts')->onDelete('cascade');
             $table->unsignedBigInteger('product_id')->index(); // Tham chiếu Catalog Service
             $table->unsignedBigInteger('variant_id')->index(); // Tham chiếu Catalog Service
             $table->unsignedInteger('quantity')->default(1);
+            $table->decimal('price', 12, 2)->default(0);       // Đã gộp cột price vào đây
+            
             $table->timestamps();
 
+            // Ràng buộc đúng: 1 giỏ hàng không được có 2 dòng CHÙNG 1 BIẾN THỂ
             $table->unique(['cart_id', 'variant_id']);
         });
     }
